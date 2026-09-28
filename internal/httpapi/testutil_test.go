@@ -3,6 +3,8 @@ package httpapi
 import (
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"mimowebapi/internal/apikeys"
@@ -16,8 +18,20 @@ const testToken = "test-token-0123456789abcdef"
 
 // testConfig builds a config pointing at the given upstream, with one session
 // and one client token.
+//
+// Every on-disk path is redirected into a fresh temp directory. The defaults
+// are relative, so a test that authorises an account would otherwise rewrite
+// internal/httpapi/sessions.json — the checked-in fixture — and leave the tree
+// dirty after a plain `go test ./...`.
 func testConfig(upstreamURL string) *config.Config {
 	cfg := config.Default()
+	dir, err := os.MkdirTemp("", "mimowebapi-test-")
+	if err != nil {
+		panic(err) // a tempdir we cannot create means the environment is broken
+	}
+	cfg.Admin.KeyStorePath = filepath.Join(dir, "keys.json")
+	cfg.Admin.SessionDir = dir
+	cfg.Admin.BrowserProfileDir = filepath.Join(dir, "chrome-profile")
 	cfg.Listen = "127.0.0.1:0"
 	cfg.ClientTokens = []string{testToken}
 	cfg.Upstream.BaseURL = upstreamURL

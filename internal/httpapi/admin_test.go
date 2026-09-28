@@ -462,6 +462,9 @@ func TestSessionPersistence(t *testing.T) {
 	cfg := testConfig("https://example.invalid")
 	cfg.Admin.Password = adminPW
 	cfg.Admin.KeyStorePath = filepath.Join(dir, "keys.json")
+	// testConfig redirects storage into a tempdir of its own; point this back at
+	// the directory the assertions below read from.
+	cfg.Admin.SessionDir = dir
 	s, err := buildServer(cfg)
 	if err != nil {
 		t.Fatal(err)
