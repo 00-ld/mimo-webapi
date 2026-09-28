@@ -1,32 +1,6 @@
 {
   "sessions": [
     {
-      "label": "mimo",
-      "cookies": [
-        {
-          "name": "xiaomichatbot_serviceToken",
-          "value": "t"
-        },
-        {
-          "name": "xiaomichatbot_ph",
-          "value": "p"
-        }
-      ]
-    },
-    {
-      "label": "same",
-      "cookies": [
-        {
-          "name": "xiaomichatbot_serviceToken",
-          "value": "t"
-        },
-        {
-          "name": "xiaomichatbot_ph",
-          "value": "p"
-        }
-      ]
-    },
-    {
       "label": "x",
       "cookies": [
         {
@@ -57,6 +31,32 @@
         {
           "name": "xiaomichatbot_ph",
           "value": "abc"
+        }
+      ]
+    },
+    {
+      "label": "mimo",
+      "cookies": [
+        {
+          "name": "xiaomichatbot_serviceToken",
+          "value": "t"
+        },
+        {
+          "name": "xiaomichatbot_ph",
+          "value": "p"
+        }
+      ]
+    },
+    {
+      "label": "same",
+      "cookies": [
+        {
+          "name": "xiaomichatbot_serviceToken",
+          "value": "t"
+        },
+        {
+          "name": "xiaomichatbot_ph",
+          "value": "p"
         }
       ]
     }

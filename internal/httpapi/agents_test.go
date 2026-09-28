@@ -602,8 +602,9 @@ func TestListAgentsDetectsInstalledOnes(t *testing.T) {
 			t.Errorf("%s should not be detected in an empty home", id)
 		}
 	}
-	// The two read-only agents must say so, and still carry manual steps.
-	for _, id := range []string{agentZCode, agentWorkBuddy} {
+	// WorkBuddy stays read-only: its configuration schema is not confirmed, so
+	// its entry must say so and still carry manual steps.
+	for _, id := range []string{agentWorkBuddy} {
 		if byID[id].SupportsWrite {
 			t.Errorf("%s must not claim write support", id)
 		}
@@ -613,6 +614,15 @@ func TestListAgentsDetectsInstalledOnes(t *testing.T) {
 		if len(byID[id].ManualSteps) == 0 {
 			t.Errorf("%s has no manual steps", id)
 		}
+	}
+	// ZCode is writable: its provider list is a plain JSON document whose
+	// schema has been confirmed. It must still carry manual steps for the
+	// case where the user prefers the in-app settings screen.
+	if !byID[agentZCode].SupportsWrite {
+		t.Error("zcode must claim write support")
+	}
+	if len(byID[agentZCode].ManualSteps) == 0 {
+		t.Error("zcode has no manual steps")
 	}
 	// Every agent offers manual steps as the fallback path.
 	for _, r := range rows {
@@ -668,7 +678,9 @@ func TestConfigureUnknownAgent(t *testing.T) {
 
 func TestConfigureRefusesReadOnlyAgent(t *testing.T) {
 	e, _ := tempEnv(t)
-	if _, err := configureAgent(e, agentZCode, testRelay, agentToken); err == nil {
+	// WorkBuddy is the remaining read-only agent: no confirmed schema, so a
+	// write against it must be refused rather than guessed.
+	if _, err := configureAgent(e, agentWorkBuddy, testRelay, agentToken); err == nil {
 		t.Fatal("expected a write to a read-only agent to be refused")
 	}
 }

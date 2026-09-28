@@ -263,20 +263,24 @@ func agentSpecs() []agentSpec {
 				}
 				return "", false
 			},
-			// No confirmed configuration schema: writing would be a guess that
-			// could corrupt a real file, so this agent is detect-and-advise.
-			configPath: func(agentEnv) string { return "" },
+			// ZCode stores custom providers in a plain JSON document under its
+			// v2 state directory. The schema is stable enough to edit in place:
+			// providerOrder is an id list and providerConfigRules.providerRules
+			// holds one entry per provider. Both are preserved; only the relay's
+			// own entry is added or refreshed.
+			configPath: zcodeProviderPath,
 			manual: func(e agentEnv, relayURL, token string) []string {
 				return []string{
-					"ZCode 的配置文件位置随版本变化，本服务无法确认，因此不会自动改写。",
-					"已检测到：" + strings.Join(zcodeCandidates(e), " / "),
-					"在 ZCode 的模型/提供商设置里手动填写：",
+					"ZCode 设置 → 模型服务 → 自定义提供商 → 添加",
+					"名称：mimo",
+					"接口类型：OpenAI 兼容（chat completions）",
 					"Base URL：" + strings.TrimSuffix(relayURL, "/") + "/v1",
 					"API Key：" + token,
-					"模型名：" + e.defaultModel(),
-					"若设置里要求选择协议，选 OpenAI 兼容（chat_completions）",
+					"模型 ID：" + e.defaultModel(),
+					"（本服务也可以直接改写 " + zcodeProviderPath(e) + "，点「一键接入」即可）",
 				}
 			},
+			configure: configureZCodeProviders,
 		},
 		{
 			id:   agentWorkBuddy,
@@ -323,6 +327,170 @@ func zcodeCandidates(e agentEnv) []string {
 		filepath.Join(e.home, ".zcode"),
 		filepath.Join(e.home, ".config", "zcode"),
 	}
+}
+
+// zcodeProviderPath is the document holding ZCode's custom model providers.
+//
+// ZCode keeps two config files and they are not interchangeable: <root>/cli/
+// config.json holds plugins and MCP servers, while the model providers live
+// under v2/ in a separate document. Editing the wrong one looks successful and
+// changes nothing the user can see.
+func zcodeProviderPath(e agentEnv) string {
+	return filepath.Join(e.root("ZCODE_HOME", ".zcode"), "v2", "provider_config.json")
+}
+
+// zcodeProviderID identifies the entry this relay owns.
+//
+// A stable id means a second run refreshes the entry instead of adding a
+// duplicate, which matters because the app lists every rule it finds.
+const zcodeProviderID = "mimo-webapi"
+
+// zcodeProviderName is the label shown in ZCode's provider picker.
+const zcodeProviderName = "mimo"
+
+// configureZCodeProviders adds or refreshes the relay's provider entry.
+//
+// The document is structured rather than free-form, so it is decoded, edited
+// and re-encoded with the ordered map used elsewhere in this file. That keeps
+// key order and every unrelated provider intact — a user's own gateways are
+// the common case here, and losing them would be worse than not configuring.
+func configureZCodeProviders(old string, e agentEnv, relayURL, token string) (string, error) {
+	var doc *orderedMap
+	if strings.TrimSpace(old) == "" {
+		doc = newOrderedMap()
+		doc.set("schemaVersion", &orderedValue{val: float64(1)})
+		doc.set("config", &orderedValue{val: newOrderedMap()})
+	} else {
+		parsed, err := decodeOrdered(old)
+		if err != nil {
+			return "", err
+		}
+		doc = parsed
+	}
+
+	cfgNode, _ := doc.get("config")
+	if cfgNode == nil {
+		cfgNode = &orderedValue{val: newOrderedMap()}
+		doc.set("config", cfgNode)
+	}
+	cfg, ok := cfgNode.val.(*orderedMap)
+	if !ok {
+		return "", errors.New("provider_config.json 的 config 不是对象，已放弃改写以免破坏文件")
+	}
+
+	rulesNode, _ := cfg.get("providerConfigRules")
+	if rulesNode == nil {
+		rulesNode = &orderedValue{val: newOrderedMap()}
+		cfg.set("providerConfigRules", rulesNode)
+	}
+	rules, ok := rulesNode.val.(*orderedMap)
+	if !ok {
+		return "", errors.New("provider_config.json 的 providerConfigRules 不是对象，已放弃改写以免破坏文件")
+	}
+
+	// Arrays decode into []any of *orderedValue, so the assertions below use
+	// that shape rather than []*orderedValue. Getting this wrong fails closed
+	// (the write is refused), which is why it surfaced instead of corrupting.
+	listNode, _ := rules.get("providerRules")
+	var list []any
+	if listNode != nil {
+		existing, ok := listNode.val.([]any)
+		if !ok {
+			return "", errors.New("provider_config.json 的 providerRules 不是数组，已放弃改写以免破坏文件")
+		}
+		list = existing
+	}
+
+	entry := zcodeProviderRule(relayURL, token, e.defaultModel())
+
+	// Replace in place when the relay already owns a rule; append otherwise.
+	// In-place replacement keeps the provider's position in the user's list.
+	replaced := false
+	for i, item := range list {
+		v, ok := item.(*orderedValue)
+		if !ok {
+			continue
+		}
+		m, ok := v.val.(*orderedMap)
+		if !ok {
+			continue
+		}
+		if m.getString("providerId") == zcodeProviderID {
+			list[i] = entry
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		list = append(list, entry)
+	}
+	rules.set("providerRules", &orderedValue{val: list})
+
+	// providerOrder is a separate id list the app reads for display order. The
+	// id is added once and left where it is on subsequent runs.
+	orderNode, _ := cfg.get("providerOrder")
+	order := []string{}
+	if orderNode != nil {
+		if existing, ok := orderNode.val.([]any); ok {
+			for _, item := range existing {
+				v, ok := item.(*orderedValue)
+				if !ok {
+					continue
+				}
+				if s, ok := v.val.(string); ok {
+					order = append(order, s)
+				}
+			}
+		}
+	}
+	known := false
+	for _, id := range order {
+		if id == zcodeProviderID {
+			known = true
+			break
+		}
+	}
+	if !known {
+		order = append(order, zcodeProviderID)
+	}
+	orderValues := make([]any, 0, len(order))
+	for _, id := range order {
+		orderValues = append(orderValues, &orderedValue{val: id})
+	}
+	cfg.set("providerOrder", &orderedValue{val: orderValues})
+
+	if _, ok := doc.get("schemaVersion"); !ok {
+		doc.set("schemaVersion", &orderedValue{val: float64(1)})
+	}
+
+	return doc.encode(2)
+}
+
+// zcodeProviderRule renders one entry of providerConfigRules.providerRules.
+func zcodeProviderRule(relayURL, token, model string) *orderedValue {
+	access := newOrderedMap()
+	access.set("type", &orderedValue{val: "api-key"})
+	access.set("apiKey", &orderedValue{val: token})
+
+	api := newOrderedMap()
+	api.set("type", &orderedValue{val: "openai-chat-completions"})
+	api.set("baseUrl", &orderedValue{val: strings.TrimSuffix(relayURL, "/") + "/v1"})
+
+	models := []any{&orderedValue{val: model}}
+	order := []any{&orderedValue{val: model}}
+
+	cfg := newOrderedMap()
+	cfg.set("group", &orderedValue{val: "standard-personal"})
+	cfg.set("access", &orderedValue{val: access})
+	cfg.set("api", &orderedValue{val: api})
+	cfg.set("personalModelIds", &orderedValue{val: models})
+	cfg.set("modelOrder", &orderedValue{val: order})
+
+	out := newOrderedMap()
+	out.set("providerId", &orderedValue{val: zcodeProviderID})
+	out.set("providerName", &orderedValue{val: zcodeProviderName})
+	out.set("config", &orderedValue{val: cfg})
+	return &orderedValue{val: out}
 }
 
 // workBuddyCandidates are the locations a WorkBuddy install leaves behind.
@@ -1680,7 +1848,15 @@ func (v *orderedValue) encodeInto(b *strings.Builder, indent, depth int) error {
 		b.WriteString("[\n")
 		for i, item := range t {
 			b.WriteString(pad)
-			if err := (&orderedValue{val: item}).encodeInto(b, indent, depth+1); err != nil {
+			// Elements decode to *orderedValue, so unwrap before encoding.
+			// Without this the inner value reaches the default branch and is
+			// marshalled as its own struct — which has only unexported fields,
+			// so every element silently becomes {} in the output.
+			inner := item
+			if ov, ok := item.(*orderedValue); ok {
+				inner = ov.val
+			}
+			if err := (&orderedValue{val: inner}).encodeInto(b, indent, depth+1); err != nil {
 				return err
 			}
 			if i < len(t)-1 {
