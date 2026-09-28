@@ -1,0 +1,86 @@
+{
+  "listen": "127.0.0.1:8793",
+  "client_tokens": [
+    "REPLACE_WITH_openssl_rand_hex_32"
+  ],
+  "upstream": {
+    "base_url": "https://aistudio.xiaomimimo.com",
+    "sessions": [
+      {
+        "label": "mimo-1",
+        "cookies": [
+          {
+            "name": "serviceToken",
+            "value": "REPLACE_WITH_YOUR_serviceToken"
+          },
+          {
+            "name": "userId",
+            "value": "REPLACE_WITH_YOUR_userId"
+          },
+          {
+            "name": "ph",
+            "value": "REPLACE_WITH_YOUR_ph"
+          }
+        ]
+      }
+    ],
+    "connect_timeout_seconds": 15,
+    "response_header_timeout_seconds": 120,
+    "max_body_bytes": 16777216,
+    "cooldown_seconds": 300,
+    "client_id": "",
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "locale": "zh-CN",
+    "time_zone": "Asia/Shanghai"
+  },
+  "models": {
+    "default": "mimo-v2.6-flash",
+    "list": [
+      "mimo-v2.6-pro",
+      "mimo-v2.6-flash",
+      "mimo-v2.6-pro-ultraspeed-studio"
+    ],
+    "alias": {
+      "gpt-4o": "mimo-v2.6-pro",
+      "gpt-4o-mini": "mimo-v2.6-flash"
+    },
+    "meta": {
+      "mimo-v2.6-pro": {
+        "display_name": "MiMo V2.6 Pro",
+        "context_length": 262144,
+        "max_output": 32768,
+        "capabilities": ["chat", "streaming", "reasoning", "vision"]
+      },
+      "mimo-v2.6-flash": {
+        "display_name": "MiMo V2.6 Flash",
+        "context_length": 131072,
+        "max_output": 16384,
+        "capabilities": ["chat", "streaming", "reasoning"]
+      },
+      "mimo-v2.6-pro-ultraspeed-studio": {
+        "display_name": "MiMo V2.6 Pro UltraSpeed",
+        "context_length": 262144,
+        "max_output": 32768,
+        "capabilities": ["chat", "streaming", "reasoning", "vision"]
+      }
+    }
+  },
+  "behavior": {
+    "enable_thinking_default": true,
+    "web_search_default": "auto",
+    "system_prompt_mode": "prepend"
+  },
+  "log": {
+    "level": "info",
+    "usage": true
+  },
+  "admin": {
+    "password": "REPLACE_WITH_A_STRONG_ADMIN_PASSWORD",
+    "key_store_path": "keys.json",
+    "console": true,
+    "default_rate_limit_rpm": 60,
+    "default_quota_requests": 0,
+    "default_quota_tokens": 0,
+    "allow_open_registration": false
+  }
+}

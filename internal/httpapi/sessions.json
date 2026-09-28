@@ -1,0 +1,65 @@
+{
+  "sessions": [
+    {
+      "label": "mimo",
+      "cookies": [
+        {
+          "name": "xiaomichatbot_serviceToken",
+          "value": "t"
+        },
+        {
+          "name": "xiaomichatbot_ph",
+          "value": "p"
+        }
+      ]
+    },
+    {
+      "label": "same",
+      "cookies": [
+        {
+          "name": "xiaomichatbot_serviceToken",
+          "value": "t"
+        },
+        {
+          "name": "xiaomichatbot_ph",
+          "value": "p"
+        }
+      ]
+    },
+    {
+      "label": "x",
+      "cookies": [
+        {
+          "name": "xiaomichatbot_serviceToken",
+          "value": "/vjQ"
+        },
+        {
+          "name": "userId",
+          "value": "1"
+        },
+        {
+          "name": "xiaomichatbot_ph",
+          "value": "n3=="
+        }
+      ]
+    },
+    {
+      "label": "acct",
+      "cookies": [
+        {
+          "name": "xiaomichatbot_serviceToken",
+          "value": "tok"
+        },
+        {
+          "name": "userId",
+          "value": "7"
+        },
+        {
+          "name": "xiaomichatbot_ph",
+          "value": "abc"
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

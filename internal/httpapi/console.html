@@ -1,0 +1,1298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MiMo API 控制台</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#282d38;
+    --fg:#e7eaf0; --dim:#8b93a7; --accent:#4c8dff; --accent2:#7c5cff;
+    --ok:#3ecf8e; --warn:#f0b429; --bad:#f2555a;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
+  a{color:var(--accent)}
+  button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--fg);padding:8px 14px;transition:.12s}
+  button:hover{border-color:#3a4150;background:#242936}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover{background:#3d7ce8}
+  button.danger{color:var(--bad);border-color:#4a2529}
+  button.danger:hover{background:#2a1a1c}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  input,select,textarea{font:inherit;background:var(--bg);color:var(--fg);
+    border:1px solid var(--line);border-radius:8px;padding:8px 12px;width:100%}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  .wrap{max-width:1180px;margin:0 auto;padding:24px}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:22px;flex-wrap:wrap}
+  .logo{width:34px;height:34px;border-radius:9px;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px}
+  h1{font-size:19px;margin:0;font-weight:650}
+  .sub{color:var(--dim);font-size:12.5px}
+  .spacer{flex:1}
+  .grid{display:grid;gap:16px}
+  @media(min-width:900px){.cols{grid-template-columns:1fr 380px}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+  .card h2{font-size:14px;margin:0 0 14px;font-weight:650;display:flex;
+    align-items:center;gap:8px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;
+    margin-bottom:18px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .stat .k{color:var(--dim);font-size:12px;margin-bottom:5px}
+  .stat .v{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--dim);font-weight:500;font-size:12px;
+    padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:11px 10px;border-bottom:1px solid #1e222b;vertical-align:middle}
+  tr:last-child td{border-bottom:0}
+  tr:hover td{background:#1a1e26}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;
+    font-size:11.5px;font-weight:600;border:1px solid transparent}
+  .pill.on{background:#12301f;color:var(--ok);border-color:#1c4a31}
+  .pill.off{background:#2a2f3a;color:var(--dim);border-color:#353b48}
+  .pill.warn{background:#332a10;color:var(--warn);border-color:#4d3f18}
+  .pill.bad{background:#301618;color:var(--bad);border-color:#4a2427}
+  .bar{height:4px;background:#232833;border-radius:3px;overflow:hidden;margin-top:6px}
+  .bar>i{display:block;height:100%;background:var(--accent);border-radius:3px}
+  .bar.warn>i{background:var(--warn)} .bar.bad>i{background:var(--bad)}
+  .field{margin-bottom:13px}
+  .field label{display:block;font-size:12.5px;color:var(--dim);margin-bottom:5px}
+  .row{display:flex;gap:10px;align-items:center}
+  .modal-bg{position:fixed;inset:0;background:#000a;backdrop-filter:blur(3px);
+    display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:26px;max-width:560px;width:100%;max-height:90vh;overflow:auto}
+  .secret{background:#0b0d11;border:1px solid #2f3a4d;border-radius:10px;padding:14px;
+    font-family:var(--mono);font-size:12.5px;word-break:break-all;margin:12px 0;
+    user-select:all;line-height:1.7}
+  .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);
+    background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:11px 20px;z-index:100;box-shadow:0 8px 30px #0008;font-size:13px}
+  .toast.err{border-color:#4a2427;color:#ffb4b6}
+  .login{max-width:380px;margin:14vh auto}
+  .chat{display:flex;flex-direction:column;height:min(560px,70vh)}
+  .msgs{flex:1;overflow-y:auto;padding:14px;background:var(--bg);
+    border:1px solid var(--line);border-radius:10px;margin-bottom:12px}
+  .msg{margin-bottom:13px;display:flex;gap:10px}
+  .msg .who{flex:none;width:34px;height:34px;border-radius:8px;display:flex;
+    align-items:center;justify-content:center;font-size:12px;font-weight:650}
+  .msg.u .who{background:#22304a;color:#9dc0ff}
+  .msg.a .who{background:#2a2440;color:#c0aaff}
+  .msg .body{flex:1;min-width:0;white-space:pre-wrap;word-break:break-word}
+  .msg .body.think{color:var(--dim);font-style:italic}
+  .empty{color:var(--dim);text-align:center;padding:50px 20px;font-size:13px}
+  .hint{color:var(--dim);font-size:12px;margin-top:7px;line-height:1.6}
+  code{background:#222731;padding:1px 6px;border-radius:5px;font-family:var(--mono);
+    font-size:12px}
+  .copyrow{display:flex;gap:8px;align-items:center;margin-top:14px}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px}
+  .tabs button{border:0;background:transparent;border-radius:0;padding:9px 15px;
+    color:var(--dim);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tabs button.active{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}
+  .tabs button:hover{background:transparent;color:var(--fg)}
+  .hide{display:none!important}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .empty{color:var(--dim);text-align:center;padding:50px 20px;font-size:13px}
+
+  /* ---------- status bar ---------- */
+  .sbar{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin-bottom:18px}
+  .sbar .cell{display:flex;align-items:center;gap:9px;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;padding:10px 15px;flex:1 1 190px;
+    min-width:0}
+  .sbar .cell.link{cursor:pointer}
+  .sbar .cell.link:hover{border-color:#3a4150;background:#1b1f28}
+  .sbar .dot{width:9px;height:9px;border-radius:50%;background:var(--dim);flex:none}
+  .sbar .dot.on{background:var(--ok);box-shadow:0 0 0 3px #3ecf8e22}
+  .sbar .dot.warn{background:var(--warn);box-shadow:0 0 0 3px #f0b42922}
+  .sbar .dot.bad{background:var(--bad);box-shadow:0 0 0 3px #f2555a22}
+  .sbar .lab{color:var(--dim);font-size:11.5px;line-height:1.35}
+  .sbar .val{font-size:14px;font-weight:650;line-height:1.35;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .sbar .val.small{font-size:12.5px;font-weight:600}
+  .ready{display:flex;align-items:center;gap:10px;background:#10281c;
+    border:1px solid #1c4a31;border-radius:12px;padding:12px 16px;margin-bottom:16px}
+  .ready .ic{width:24px;height:24px;border-radius:7px;background:#1c4a31;color:var(--ok);
+    display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+  .ready .t{font-weight:650}
+  .ready .d{color:var(--dim);font-size:12px}
+  .ready.pending{background:#2a2413;border-color:#4d3f18}
+  .ready.pending .ic{background:#4d3f18;color:var(--warn)}
+
+  /* ---------- quick start ---------- */
+  .step{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid #1e222b}
+  .step:last-child{border-bottom:0}
+  .step .n{width:26px;height:26px;border-radius:50%;flex:none;display:flex;
+    align-items:center;justify-content:center;font-size:12.5px;font-weight:700;
+    background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+  .step.done .n{background:#12301f;border-color:#1c4a31;color:var(--ok)}
+  .step .txt{flex:1;min-width:0}
+  .step .tt{font-weight:600}
+  .step .td{color:var(--dim);font-size:12.5px;margin-top:2px}
+  .step .act{flex:none}
+
+  /* ---------- agent cards ---------- */
+  .agrid{display:grid;gap:14px;grid-template-columns:1fr}
+  @media(min-width:760px){.agrid{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}}
+  .agent{background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+    padding:16px;display:flex;flex-direction:column;gap:12px}
+  .agent.on{border-color:#1c4a31;background:#16221c}
+  .agent.na{opacity:.72}
+  .aghead{display:flex;align-items:center;gap:12px}
+  .agicon{width:36px;height:36px;border-radius:10px;flex:none;display:flex;
+    align-items:center;justify-content:center;font-weight:700;font-size:15px;
+    background:linear-gradient(135deg,#2a3244,#1e222b);border:1px solid var(--line)}
+  .agent.on .agicon{background:linear-gradient(135deg,#1c4a31,#12301f);border-color:#1c4a31}
+  .agname{font-weight:650;font-size:13.5px;line-height:1.35}
+  .agpath{font-family:var(--mono);font-size:11px;color:var(--dim);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
+  .agbtns{display:flex;gap:8px;flex-wrap:wrap}
+  .agbtns button{flex:1 1 auto;min-width:104px}
+  .steps{margin-top:2px;border-top:1px solid #262b36;padding-top:12px}
+  .steps .secret{margin:0 0 10px;max-height:240px;overflow:auto}
+  .agmsg{font-size:12px;color:var(--dim);line-height:1.6}
+  .agmsg.ok{color:var(--ok)} .agmsg.err{color:var(--bad)}
+</style>
+</head>
+<body>
+
+<!-- ---------- login ---------- -->
+<div id="login" class="login hide">
+  <div class="card">
+    <div class="row" style="margin-bottom:20px">
+      <div class="logo">M</div>
+      <div>
+        <h1>MiMo API</h1>
+        <div class="sub">管理控制台</div>
+      </div>
+    </div>
+    <div class="field">
+      <label>管理密码</label>
+      <input id="pw" type="password" placeholder="admin.password" autocomplete="current-password">
+    </div>
+    <button class="primary" style="width:100%" onclick="doLogin()">登录</button>
+    <div id="loginerr" class="hint" style="color:var(--bad)"></div>
+  </div>
+</div>
+
+<!-- ---------- app ---------- -->
+<div id="app" class="hide">
+  <div class="wrap">
+    <header>
+      <div class="logo">M</div>
+      <div>
+        <h1>MiMo API 控制台</h1>
+        <div class="sub" id="upstreamInfo"></div>
+      </div>
+      <div class="spacer"></div>
+      <button onclick="loadAll()">刷新</button>
+      <button onclick="doLogout()">退出</button>
+    </header>
+
+    <div id="readyBanner"></div>
+    <div class="sbar" id="statusBar"></div>
+
+    <div class="tabs">
+      <button class="active" data-tab="agents" onclick="tab('agents')">接入</button>
+      <button data-tab="account" onclick="tab('account')">账号</button>
+      <button data-tab="keys" onclick="tab('keys')">密钥</button>
+      <button data-tab="play" onclick="tab('play')">测试</button>
+      <button data-tab="guide" onclick="tab('guide')">参考</button>
+    </div>
+
+    <!-- ===== agents ===== -->
+    <section id="tab-agents">
+      <div class="card">
+        <h2>快速开始 <span class="sub">照着点三步就能用</span></h2>
+        <div id="quickBody"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>
+          接入 Agent <span class="sub" id="agentCount"></span>
+          <span class="spacer"></span>
+          <button onclick="loadAgents(true)">重新检测</button>
+        </h2>
+        <p class="sub" style="margin-top:0">
+          检测到本机装了哪个 AI 编程工具，点「一键接入」就会自动把配置改成走本服务 ——
+          不需要你手写配置文件，改写前会自动备份原文件。</p>
+        <div class="agrid" id="agentsBody"></div>
+      </div>
+    </section>
+
+    <!-- ===== account ===== -->
+    <section id="tab-account">
+      <div class="card" id="authCard">
+        <h2>MiMo 账号授权</h2>
+        <div id="authBody"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>当前账号</h2>
+        <div id="sessBody"></div>
+      </div>
+    </section>
+
+    <!-- ===== keys ===== -->
+    <section id="tab-keys" class="hide">
+      <div class="stats" id="stats"></div>
+      <div class="grid cols">
+        <div class="card">
+          <h2>已签发的密钥 <span id="keycount" class="sub"></span></h2>
+          <div id="keysBody"></div>
+        </div>
+        <div class="card">
+          <h2>新建密钥</h2>
+          <div class="field">
+            <label>名称（给谁用）</label>
+            <input id="nName" placeholder="例如：同事小王">
+          </div>
+          <div class="field">
+            <label>额度 · 请求数上限（0 = 不限）</label>
+            <input id="nReqs" type="number" min="0" value="0">
+          </div>
+          <div class="field">
+            <label>额度 · Token 上限（0 = 不限）</label>
+            <input id="nTokens" type="number" min="0" value="0">
+          </div>
+          <div class="field">
+            <label>限速 · 每分钟请求数（0 = 不限）</label>
+            <input id="nRpm" type="number" min="0" value="60">
+          </div>
+          <div class="field">
+            <label>有效期 · 小时（0 = 永久）</label>
+            <input id="nTtl" type="number" min="0" value="0">
+          </div>
+          <div class="field">
+            <label>备注</label>
+            <input id="nNote" placeholder="可留空">
+          </div>
+          <button class="primary" style="width:100%" onclick="createKey()">生成密钥</button>
+          <div class="hint">密钥只在生成时显示一次，之后只保存哈希。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== playground ===== -->
+    <section id="tab-play" class="hide">
+      <div class="card">
+        <h2>测试台</h2>
+        <div class="row" style="margin-bottom:12px;flex-wrap:wrap">
+          <select id="pKey" style="flex:1;min-width:180px"></select>
+          <select id="pModel" style="flex:1;min-width:150px"></select>
+          <label class="row" style="gap:6px;white-space:nowrap">
+            <input type="checkbox" id="pThink" style="width:auto"> 深度思考
+          </label>
+        </div>
+        <div class="chat">
+          <div class="msgs" id="pMsgs">
+            <div class="empty">发一条消息开始测试<br>
+              <span style="font-size:12px">用的是选中密钥的真实额度</span></div>
+          </div>
+          <div class="row">
+            <input id="pInput" placeholder="输入消息，回车发送"
+                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}">
+            <button class="primary" onclick="send()">发送</button>
+          </div>
+        </div>
+        <div class="hint" id="pMeta"></div>
+      </div>
+    </section>
+
+    <!-- ===== guide ===== -->
+    <section id="tab-guide" class="hide">
+      <div class="card">
+        <h2>怎么接进来</h2>
+        <p class="sub">把下面两块发给要用的人，他们就能像用 OpenAI 一样用。</p>
+
+        <div class="field" style="margin-top:18px">
+          <label>1 · OpenAI 兼容客户端（Cherry Studio / Cline / 任意 SDK）</label>
+          <div class="secret" id="gOpenAI"></div>
+          <button onclick="cp('gOpenAI')">复制</button>
+        </div>
+
+        <div class="field" style="margin-top:22px">
+          <label>2 · Claude Code / Anthropic 兼容</label>
+          <div class="secret" id="gAnthropic"></div>
+          <button onclick="cp('gAnthropic')">复制</button>
+        </div>
+
+        <div class="field" style="margin-top:22px">
+          <label>3 · 可用模型</label>
+          <div class="secret" id="gModels"></div>
+        </div>
+
+        <div class="hint">
+          Base URL 若在别的机器上使用，把 <code>127.0.0.1</code> 换成这台机器的
+          局域网 IP，并在配置里打开 <code>allow_non_loopback_listen</code>。
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="modal"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+const api = async (path, opts = {}) => {
+  const r = await fetch("/admin/api" + path, {
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  let data = null;
+  try { data = await r.json(); } catch {}
+  if (!r.ok) {
+    const msg = (data && (data.error || data.message)) || ("HTTP " + r.status);
+    const e = new Error(msg); e.status = r.status; throw e;
+  }
+  return data;
+};
+
+/* ---------- ui helpers ---------- */
+function toast(msg, isErr) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast" + (isErr ? " err" : "");
+  clearTimeout(t._t);
+  t._t = setTimeout(() => { t.className = "toast hide"; }, 3200);
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+function num(n) { return (n || 0).toLocaleString("en-US"); }
+function cp(id) {
+  const el = $(id);
+  const sel = window.getSelection(); const r = document.createRange();
+  r.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(r);
+  navigator.clipboard.writeText(el.textContent)
+    .then(() => toast("已复制")).catch(() => toast("请手动复制", true));
+}
+function fmtWhen(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000), now = Date.now() / 1000;
+  const diff = now - ts;
+  if (diff < 60) return "刚刚";
+  if (diff < 3600) return Math.floor(diff / 60) + " 分钟前";
+  if (diff < 86400) return Math.floor(diff / 3600) + " 小时前";
+  return d.toLocaleDateString("zh-CN");
+}
+
+/* ---------- auth ---------- */
+async function boot() {
+  try {
+    await api("/session");
+    showApp();
+  } catch {
+    $("login").classList.remove("hide");
+  }
+}
+async function doLogin() {
+  const pw = $("pw").value;
+  if (!pw) return;
+  $("loginerr").textContent = "";
+  try {
+    await api("/login", { method: "POST", body: JSON.stringify({ password: pw }) });
+    $("pw").value = "";
+    showApp();
+  } catch (e) {
+    $("loginerr").textContent = e.message;
+  }
+}
+async function doLogout() {
+  try { await api("/logout", { method: "POST" }); } catch {}
+  location.reload();
+}
+$("pw").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+function showApp() {
+  $("login").classList.add("hide");
+  $("app").classList.remove("hide");
+  loadAll();
+  // First run has no account yet, so land on the wizard; otherwise land on the
+  // "connect an agent" screen, which is the whole point of the console.
+  api("/auth/sessions").then(d => {
+    if (!(d.sessions || []).length) { tab("account"); loadAuth(); }
+    else { tab("agents"); }
+  }).catch(() => { tab("agents"); });
+  loadAgents(false);
+}
+
+/* ---------- tabs ---------- */
+const TABS = ["agents", "account", "keys", "play", "guide"];
+function tab(name) {
+  document.querySelectorAll(".tabs button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === name));
+  TABS.forEach(t => $("tab-" + t).classList.toggle("hide", t !== name));
+  if (name === "guide") renderGuide();
+  if (name === "account") loadAuth();
+  if (name === "agents") renderQuick();
+}
+
+/* ---------- data ---------- */
+let STATE = { keys: [], status: null, agents: [] };
+
+async function loadAll() {
+  try {
+    const [ks, st] = await Promise.all([api("/keys"), api("/status")]);
+    STATE.keys = ks.keys || [];
+    STATE.status = st;
+    renderStats();
+    renderKeys();
+    renderKeySelect();
+    renderModels();
+    renderStatusBar();
+    renderQuick();
+    $("upstreamInfo").textContent =
+      st.upstream + " · " + (st.sessions || []).length + " 个上游会话";
+  } catch (e) {
+    if (e.status === 401) { location.reload(); return; }
+    toast(e.message, true);
+    renderStatusBar();
+  }
+}
+
+/* ---------- status bar + quick start ---------- */
+// The console has to answer "am I good to go?" before the user reads anything
+// else, so everything below is derived from STATE and survives a failed fetch.
+function readiness() {
+  const st = STATE.status || {};
+  const sessions = st.sessions || [];
+  const usable = sessions.filter(s => !s.cooling_down).length;
+  const models = (st.models || []).length;
+  const activeKeys = STATE.keys.filter(k => k.enabled && !k.exhausted).length;
+  const configured = (STATE.agents || []).filter(a => a.configured).length;
+  const detected = (STATE.agents || []).filter(a => a.detected).length;
+  return { st, sessions, usable, models, activeKeys, configured, detected,
+           live: !!STATE.status };
+}
+
+function renderStatusBar() {
+  const r = readiness();
+  const sessCls = !r.live ? "" : r.usable ? "on" : "bad";
+  const cells = [
+    `<div class="cell"><span class="dot ${r.live ? "on" : "warn"}"></span>
+       <div><div class="lab">服务状态</div>
+       <div class="val small">${r.live ? "运行中 · 可以调用" : "读取中…"}</div></div></div>`,
+    `<div class="cell ${r.usable ? "" : "link"}" ${r.usable ? "" : 'onclick="tab(\'account\')" title="去授权一个账号"'}>
+       <span class="dot ${sessCls}"></span>
+       <div><div class="lab">已授权账号</div>
+       <div class="val small">${r.live ? (r.sessions.length + " 个" + (r.usable < r.sessions.length ? "（" + r.usable + " 个可用）" : "")) : "—"}</div></div></div>`,
+    `<div class="cell"><span class="dot ${r.models ? "on" : ""}"></span>
+       <div><div class="lab">可用模型</div>
+       <div class="val small">${r.live ? r.models + " 个" : "—"}</div></div></div>`,
+    `<div class="cell link" onclick="tab('keys')" title="去签发密钥">
+       <span class="dot ${r.activeKeys ? "on" : "warn"}"></span>
+       <div><div class="lab">可用密钥</div>
+       <div class="val small">${r.activeKeys} 个</div></div></div>`,
+    `<div class="cell link" onclick="tab('agents')" title="去接入">
+       <span class="dot ${r.configured ? "on" : r.detected ? "warn" : ""}"></span>
+       <div><div class="lab">已接入工具</div>
+       <div class="val small">${AGENTS_LOADED ? r.configured + " / " + r.detected + " 已检测" : "—"}</div></div></div>`,
+  ];
+  $("statusBar").innerHTML = cells.join("");
+
+  const ready = r.usable > 0 && r.activeKeys > 0;
+  $("readyBanner").innerHTML = ready
+    ? `<div class="ready">
+         <div class="ic">✓</div>
+         <div><div class="t">现在就能用了</div>
+         <div class="d">服务已就绪，${r.sessions.length} 个账号在线，
+           ${r.activeKeys} 个密钥可用。直接去下面接一个工具，或先去「测试」页发一条消息。</div></div>
+       </div>`
+    : `<div class="ready pending">
+         <div class="ic">!</div>
+         <div><div class="t">还差一步</div>
+         <div class="d">${!r.usable ? "还没有可用的上游账号 —— 先完成账号授权。" :
+           "还没有可用的密钥 —— 先生成一串密钥。"}</div></div>
+       </div>`;
+}
+
+function renderQuick() {
+  const r = readiness();
+  const steps = [
+    {
+      done: r.usable > 0,
+      t: "授权 MiMo 账号",
+      d: r.usable > 0 ? "已授权 " + r.sessions.length + " 个账号，保持登录即可"
+                      : "打开一个独立浏览器窗口登录小米账号，本页会自动接管",
+      btn: r.usable > 0 ? "换一个账号" : "打开登录窗口",
+      act: "quickAuth()",
+    },
+    {
+      done: r.activeKeys > 0,
+      t: "生成一串访问密钥",
+      d: r.activeKeys > 0 ? "已有 " + r.activeKeys + " 个可用密钥"
+                          : "生成后复制给要用的工具，只在生成时显示一次",
+      btn: r.activeKeys > 0 ? "再生成一个" : "生成密钥",
+      act: "quickKey()",
+    },
+    {
+      done: r.configured > 0,
+      t: "接入你的 AI 工具",
+      d: r.configured > 0 ? "已接入 " + r.configured + " 个工具"
+        : r.detected > 0 ? "检测到 " + r.detected + " 个已安装的工具，点一下自动写入配置"
+        : "下面会列出本机检测到的工具，装了就点「一键接入」",
+      btn: r.configured > 0 ? "去测试一下" : "一键接入",
+      act: "quickAgent()",
+    },
+  ].slice(0, 3);
+
+  $("quickBody").innerHTML = steps.map((s, i) => `
+    <div class="step ${s.done ? "done" : ""}">
+      <div class="n">${s.done ? "✓" : i + 1}</div>
+      <div class="txt"><div class="tt">${s.t}</div><div class="td">${esc(s.d)}</div></div>
+      <div class="act"><button class="${s.done ? "" : "primary"}"
+        onclick="${s.act}">${s.btn}</button></div>
+    </div>`).join("");
+}
+
+function quickAuth() { tab("account"); loadAuth(); }
+function quickKey() {
+  tab("keys");
+  const el = $("nName");
+  if (el) { el.focus(); el.scrollIntoView({ behavior: "smooth", block: "center" }); }
+}
+function quickAgent() {
+  const r = readiness();
+  if (r.configured > 0) { tab("play"); return; }
+  tab("agents");
+  const next = (STATE.agents || []).find(a => a.detected && !a.configured && a.supports_write);
+  if (next) configureAgent(next.id);
+  else document.getElementById("agentsBody").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function renderStats() {
+  const st = STATE.status; if (!st) return;
+  const cards = [
+    ["密钥总数", num(st.keys_total)],
+    ["可用密钥", num(st.keys_active)],
+    ["累计请求", num(st.total_requests)],
+    ["累计 Token", num(st.total_tokens)],
+  ];
+  $("stats").innerHTML = cards.map(([k, v]) =>
+    `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+
+function quotaCell(k) {
+  const parts = [];
+  if (k.quota_requests > 0) {
+    const p = Math.min(100, k.used_requests / k.quota_requests * 100);
+    const cls = p >= 100 ? "bad" : p >= 80 ? "warn" : "";
+    parts.push(`<div style="font-size:11.5px">请求 ${num(k.used_requests)}/${num(k.quota_requests)}</div>
+      <div class="bar ${cls}"><i style="width:${p}%"></i></div>`);
+  } else {
+    parts.push(`<div style="font-size:11.5px;color:var(--dim)">请求 ${num(k.used_requests)} / 不限</div>
+      <div class="bar"><i style="width:0"></i></div>`);
+  }
+  if (k.quota_tokens > 0) {
+    const p = Math.min(100, k.used_tokens / k.quota_tokens * 100);
+    const cls = p >= 100 ? "bad" : p >= 80 ? "warn" : "";
+    parts.push(`<div style="font-size:11.5px;margin-top:7px">Token ${num(k.used_tokens)}/${num(k.quota_tokens)}</div>
+      <div class="bar ${cls}"><i style="width:${p}%"></i></div>`);
+  } else {
+    parts.push(`<div style="font-size:11.5px;color:var(--dim);margin-top:7px">Token ${num(k.used_tokens)} / 不限</div>
+      <div class="bar"><i style="width:0"></i></div>`);
+  }
+  return parts.join("");
+}
+
+function renderKeys() {
+  const body = $("keysBody");
+  $("keycount").textContent = STATE.keys.length ? `（${STATE.keys.length}）` : "";
+  if (!STATE.keys.length) {
+    body.innerHTML = `<div class="empty">还没有密钥<br>
+      <span style="font-size:12px">在右边生成一个，发给要用的人</span></div>`;
+    return;
+  }
+  const rows = STATE.keys.map(k => {
+    let pill = '<span class="pill on">● 启用</span>';
+    if (!k.enabled) pill = '<span class="pill off">○ 停用</span>';
+    else if (k.expired) pill = '<span class="pill bad">已过期</span>';
+    else if (k.exhausted) pill = '<span class="pill warn">额度用尽</span>';
+
+    return `<tr>
+      <td>
+        <div style="font-weight:600">${esc(k.name)}</div>
+        <div class="mono" style="color:var(--dim);font-size:11.5px">${esc(k.prefix)}…</div>
+        ${k.note ? `<div class="sub" style="font-size:11.5px">${esc(k.note)}</div>` : ""}
+      </td>
+      <td>${pill}</td>
+      <td style="min-width:150px">${quotaCell(k)}</td>
+      <td style="white-space:nowrap;font-size:12px">
+        <div>${k.rate_limit_rpm ? k.rate_limit_rpm + "/分" : "不限速"}</div>
+        <div class="sub">${k.expires_at ? "至 " + new Date(k.expires_at * 1000).toLocaleDateString("zh-CN") : "永久"}</div>
+      </td>
+      <td style="white-space:nowrap;font-size:12px;color:var(--dim)">${fmtWhen(k.last_used_at)}</td>
+      <td style="white-space:nowrap">
+        <button onclick="toggleKey('${k.id}',${!k.enabled})" title="${k.enabled ? "停用" : "启用"}">
+          ${k.enabled ? "停用" : "启用"}</button>
+        <button onclick="editKey('${k.id}')">编辑</button>
+        <button onclick="rotateKey('${k.id}')">换密钥</button>
+        <button class="danger" onclick="delKey('${k.id}')">删除</button>
+      </td>
+    </tr>`;
+  }).join("");
+
+  body.innerHTML = `<div style="overflow-x:auto"><table>
+    <thead><tr><th>名称</th><th>状态</th><th>用量</th><th>限制</th><th>最近使用</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function renderKeySelect() {
+  const sel = $("pKey");
+  const prev = sel.value;
+  sel.innerHTML = STATE.keys.filter(k => k.enabled && !k.exhausted)
+    .map(k => `<option value="${k.id}">${esc(k.name)} (${esc(k.prefix)}…)</option>`).join("");
+  if (prev) sel.value = prev;
+}
+
+function renderModels() {
+  const st = STATE.status; if (!st) return;
+  $("pModel").innerHTML = (st.models || [])
+    .map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  if (st.default_model) $("pModel").value = st.default_model;
+}
+
+function renderGuide() {
+  const origin = location.origin;
+  $("gOpenAI").textContent =
+`Base URL:  ${origin}/v1
+API Key:   sk-mimo-...        ← 你签发的那串
+Model:     ${(STATE.status && STATE.status.default_model) || "mimo-v2.6-flash"}`;
+  $("gAnthropic").textContent =
+`export ANTHROPIC_BASE_URL=${origin}
+export ANTHROPIC_API_KEY=sk-mimo-...`;
+  $("gModels").textContent = ((STATE.status && STATE.status.models) || []).join("\n");
+}
+
+/* ---------- agent onboarding ---------- */
+// The known tools, used both as icons and as a fallback so the panel still
+// renders something useful when the backend has no /agents route yet.
+const AGENT_FALLBACK = [
+  { id: "codex",     name: "Codex CLI",         icon: "C", hint: "~/.codex/config.toml" },
+  { id: "claude",    name: "Claude Code",       icon: "A", hint: "~/.claude/settings.json" },
+  { id: "dsh",       name: "DeepSeek Harness",  icon: "D", hint: "cordis.patch.yml" },
+  { id: "zcode",     name: "ZCode",             icon: "Z", hint: "桌面客户端" },
+  { id: "workbuddy", name: "WorkBuddy",         icon: "W", hint: "腾讯 WorkBuddy" },
+];
+let AGENTS_LOADED = false;
+let AGENT_BUSY = {};
+
+function agentMeta(id) {
+  return AGENT_FALLBACK.find(a => a.id === id) || { id, name: id, icon: "?", hint: "" };
+}
+function stepsText(a) {
+  const s = a.manual_steps;
+  if (Array.isArray(s)) return s.join("\n");
+  return String(s == null ? "" : s);
+}
+
+// loadAgents pulls the detection list. A missing or failing backend degrades to
+// placeholder cards instead of an empty panel, and never blocks the rest of the
+// console.
+async function loadAgents(announce) {
+  try {
+    const list = await api("/agents");
+    const arr = Array.isArray(list) ? list : (list && list.agents) || [];
+    STATE.agents = arr.length ? arr : [];
+    AGENTS_LOADED = arr.length > 0;
+    if (announce) {
+      const d = STATE.agents.filter(a => a.detected).length;
+      const c = STATE.agents.filter(a => a.configured).length;
+      toast(`检测完成：发现 ${d} 个工具，已接入 ${c} 个`);
+    }
+  } catch (e) {
+    AGENTS_LOADED = false;
+    STATE.agents = [];
+    if (announce) toast("检测失败：" + e.message, true);
+    if (e.status === 401) return;
+  }
+  renderAgents();
+  renderStatusBar();
+  renderQuick();
+}
+
+function renderAgents() {
+  const body = $("agentsBody");
+  const list = AGENTS_LOADED ? STATE.agents : AGENT_FALLBACK.map(m => ({
+    ...m, detected: null, configured: false, supports_write: false,
+    manual_steps: "", config_path: "", detected_path: "",
+  }));
+
+  $("agentCount").textContent = AGENTS_LOADED
+    ? `（检测到 ${list.filter(a => a.detected).length} · 已接入 ${list.filter(a => a.configured).length}）`
+    : "";
+
+  body.innerHTML = list.map(a => {
+    const m = agentMeta(a.id);
+    const name = a.name || m.name;
+    const icon = m.icon;
+
+    let badge, cls = "", canWrite = a.supports_write !== false && a.detected !== false;
+    if (!AGENTS_LOADED) {
+      badge = '<span class="pill off">状态未知</span>'; cls = "na"; canWrite = false;
+    } else if (a.configured) {
+      badge = '<span class="pill on">● 已接入 ✓</span>'; cls = "on";
+    } else if (a.detected) {
+      badge = '<span class="pill warn">可接入</span>';
+    } else {
+      badge = '<span class="pill off">○ 未检测到</span>'; cls = "na"; canWrite = false;
+    }
+
+    const path = a.detected_path || a.config_path || m.hint || "";
+    let mainBtn;
+    if (!AGENTS_LOADED) {
+      mainBtn = `<button disabled>暂不可用</button>`;
+    } else if (!a.detected) {
+      mainBtn = `<button disabled>未检测到</button>`;
+    } else if (a.supports_write === false) {
+      mainBtn = `<button disabled>需手动配置</button>`;
+    } else if (AGENT_BUSY[a.id]) {
+      mainBtn = `<button class="primary" disabled>正在接入…</button>`;
+    } else if (a.configured) {
+      mainBtn = `<button class="primary" onclick="configureAgent('${a.id}')">重新接入</button>`;
+    } else {
+      mainBtn = `<button class="primary" onclick="configureAgent('${a.id}')">一键接入</button>`;
+    }
+
+    const steps = stepsText(a);
+    const autoOpen = steps && (!a.detected || a.supports_write === false);
+    return `<div class="agent ${cls}">
+      <div class="aghead">
+        <div class="agicon">${esc(icon)}</div>
+        <div style="flex:1;min-width:0">
+          <div class="agname">${esc(name)}</div>
+          <div class="agpath" title="${esc(path)}">${esc(path)}</div>
+        </div>
+        ${badge}
+      </div>
+      <div class="agbtns">
+        ${mainBtn}
+        ${steps ? `<button onclick="toggleSteps('${a.id}')"
+          id="stepsBtn-${a.id}">${autoOpen ? "收起手动步骤" : "查看手动步骤"}</button>` : ""}
+      </div>
+      <div class="agmsg" id="agmsg-${a.id}"></div>
+      ${steps ? `<div class="steps ${autoOpen ? "" : "hide"}" id="steps-${a.id}">
+        <div class="secret" id="stepsText-${a.id}">${esc(steps)}</div>
+        <button onclick="cp('stepsText-${a.id}')">复制配置</button>
+      </div>` : ""}
+    </div>`;
+  }).join("");
+
+  if (!AGENTS_LOADED) {
+    body.insertAdjacentHTML("afterbegin", `<div class="agmsg" style="grid-column:1/-1">
+      服务端还没有提供自动检测接口，下面只列出已知工具的手动接入位置。
+      可以先在「参考」页复制 Base URL 与密钥，填进对应工具的设置里。</div>`);
+  }
+}
+
+function toggleSteps(id) {
+  const box = $("steps-" + id), btn = $("stepsBtn-" + id);
+  if (!box) return;
+  const hidden = box.classList.toggle("hide");
+  if (btn) btn.textContent = hidden ? "查看手动步骤" : "收起手动步骤";
+}
+
+async function configureAgent(id) {
+  const a = (STATE.agents || []).find(x => x.id === id);
+  const name = (a && a.name) || agentMeta(id).name;
+  AGENT_BUSY[id] = true;
+  renderAgents();
+  const msg = $("agmsg-" + id);
+  if (msg) { msg.className = "agmsg"; msg.textContent = "正在写入配置…"; }
+  try {
+    const r = await api(`/agents/${encodeURIComponent(id)}/configure`, { method: "POST" });
+    const line = (r && (r.message || "已接入")) +
+      (r && r.backup_path ? ` · 原文件已备份为 ${r.backup_path}` : "");
+    toast(name + " 接入完成");
+    delete AGENT_BUSY[id];
+    await loadAgents(false);
+    const m2 = $("agmsg-" + id);
+    if (m2) { m2.className = "agmsg ok"; m2.textContent = "✓ " + line; }
+  } catch (e) {
+    delete AGENT_BUSY[id];
+    renderAgents();
+    const m2 = $("agmsg-" + id);
+    if (m2) { m2.className = "agmsg err"; m2.textContent = "接入失败：" + e.message; }
+    toast("接入失败：" + e.message, true);
+  }
+}
+
+/* ---------- account authorisation ---------- */
+let AUTH_POLL = null;
+
+async function loadAuth() {
+  try {
+    const st = await api("/auth/status");
+    renderAuth(st);
+    const ss = await api("/auth/sessions");
+    renderSessions(ss);
+    // Keep polling while a login is in flight so the page updates itself.
+    const busy = st.running || st.status === "waiting_for_login" ||
+                 st.status === "waiting_for_chat_visit" ||
+                 st.status === "verifying";
+    if (busy && !AUTH_POLL) {
+      AUTH_POLL = setInterval(async () => {
+        try {
+          const s2 = await api("/auth/status");
+          renderAuth(s2);
+          if (!s2.running && s2.status !== "waiting_for_login" &&
+              s2.status !== "waiting_for_chat_visit" &&
+              s2.status !== "verifying") {
+            clearInterval(AUTH_POLL); AUTH_POLL = null;
+            loadSessionsOnly(); loadAll();
+          }
+        } catch { clearInterval(AUTH_POLL); AUTH_POLL = null; }
+      }, 1500);
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadSessionsOnly() {
+  try { renderSessions(await api("/auth/sessions")); } catch {}
+}
+
+function renderAuth(st) {
+  const b = $("authBody");
+
+  if (!st.available) {
+    b.innerHTML = `<p>没有找到 Chrome 或 Chromium，无法用向导登录。</p>
+      <div class="hint">${esc(st.detail || "")}</div>
+      <div class="hint">装一个 Chrome，或设置环境变量
+        <code>MIMO_CHROME=/path/to/chrome</code> 后重启服务。
+        也可以手动把 cookie 填进 <code>config.json</code>。</div>`;
+    return;
+  }
+
+  if (st.running || st.status === "waiting_for_login" ||
+      st.status === "waiting_for_chat_visit") {
+    let extra = "";
+    if (st.status === "waiting_for_chat_visit") {
+      extra = `<div class="hint" style="color:var(--warn)">
+        已拿到登录 cookie，还差一个防刷校验 cookie。<br>
+        请在弹出的浏览器里打开一次对话页，随便发一条消息。</div>`;
+    } else if (st.status === "verifying") {
+      extra = `<div class="hint" style="color:var(--warn)">
+        正在验证这个账号真的能用…（会发一条极短的测试请求）</div>`;
+    }
+    b.innerHTML = `
+      <div class="row" style="gap:12px">
+        <div class="logo" style="animation:pulse 1.4s infinite">…</div>
+        <div>
+          <div style="font-weight:600">等待你在浏览器里登录</div>
+          <div class="sub">已打开一个独立的 Chrome 窗口，登录完这个页面会自动继续。</div>
+        </div>
+      </div>
+      ${extra}
+      <div class="hint">
+        用的是独立的浏览器配置：<code>${esc(st.profile_dir || "")}</code><br>
+        不影响你日常用的 Chrome，向导也看不到你的密码。
+      </div>
+      <div class="copyrow">
+        <button onclick="cancelAuth()">取消</button>
+      </div>`;
+    return;
+  }
+
+  if (st.session) {
+    b.innerHTML = `
+      <div class="row" style="gap:12px">
+        <div class="logo" style="background:linear-gradient(135deg,#3ecf8e,#2b9e6b)">✓</div>
+        <div>
+          <div style="font-weight:600">已授权：${esc(st.session)}</div>
+          <div class="sub">cookie：${(st.cookies || []).map(esc).join("、")}</div>
+        </div>
+      </div>
+      <div class="copyrow">
+        <button class="primary" onclick="startAuth()">换一个账号</button>
+      </div>`;
+    return;
+  }
+
+  b.innerHTML = `
+    <p style="margin-top:0">点下面的按钮会打开一个<b>独立的 Chrome 窗口</b>，
+       你在里面正常登录小米账号即可。登录完成后本页自动接管，
+       不需要手动复制任何 cookie。</p>
+    <div class="hint">
+      · 向导看不到你的密码，也不读取你的日常浏览器<br>
+      · 登录态保存在服务端的独立配置里，重启后仍然有效<br>
+      · 支持扫码、密码、短信等任意方式
+    </div>
+    ${st.detail ? `<div class="hint" style="color:var(--warn)">上次尝试：${esc(st.detail)}</div>` : ""}
+    <div class="copyrow">
+      <button class="primary" onclick="startAuth()">打开登录窗口</button>
+      <button onclick="pasteFromClipboard()">从剪贴板粘贴</button>
+      <button onclick="toggleManual()">手动粘贴</button>
+    </div>
+    <div id="manualBox" class="hide" style="margin-top:16px">
+      <div class="field">
+        <label>把浏览器里的 Cookie 头整行粘进来</label>
+        <textarea id="mCookie" rows="4" placeholder="xiaomichatbot_serviceToken=...; userId=...; xiaomichatbot_ph=..."></textarea>
+      </div>
+      <div class="field">
+        <label>账号名称（可留空）</label>
+        <input id="mLabel" placeholder="默认用服务端配置的名字">
+      </div>
+      <div class="copyrow">
+        <button class="primary" onclick="pasteCookies()">保存这个账号</button>
+      </div>
+      <div class="hint">
+        怎么拿：在<b>已经登录</b> MiMo 的浏览器里按 F12 → Network →
+        随便点一个请求 → Request Headers → 复制 <code>Cookie:</code> 后面整行。<br>
+        <code>ph</code> 这个值必须包含在内，否则对话接口会返回 401。
+      </div>
+    </div>`;
+}
+
+function toggleManual() {
+  $("manualBox").classList.toggle("hide");
+}
+
+// Read a copied Cookie header straight from the clipboard.
+//
+// Getting a session in used to mean opening DevTools, finding a request,
+// copying one header and pasting it into a box. The clipboard already has it
+// after "Copy as cURL", so accept that too and pull the header out here.
+async function pasteFromClipboard() {
+  let text;
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (e) {
+    toast("浏览器不让读剪贴板，请用「手动粘贴」", true);
+    toggleManual();
+    return;
+  }
+  if (!text || !text.trim()) { toast("剪贴板是空的", true); return; }
+
+  const cookie = extractCookie(text);
+  if (!cookie) {
+    toast("剪贴板里没找到 Cookie，请复制整行 Cookie 头或 Copy as cURL", true);
+    toggleManual();
+    $("mCookie").value = text.trim().slice(0, 4000);
+    return;
+  }
+  try {
+    const r = await api("/auth/manual", {
+      method: "POST",
+      body: JSON.stringify({ cookie, label: $("mLabel")?.value.trim() || "" }),
+    });
+    if (r.warn) toast(r.warn, true);
+    else toast("已接管 " + (r.count || 0) + " 个 cookie");
+    loadAuth(); loadSessionsOnly(); loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+// Accept the several shapes a session actually arrives in: a bare Cookie
+// header, a `-b '...'` curl flag, or a full "Copy as cURL" command.
+function extractCookie(text) {
+  const t = text.trim();
+
+  // curl -b '...' / --cookie '...'
+  const flag = t.match(/(?:^|\s)-{1,2}(?:b|cookie)\s+(?:'([^']+)'|"([^"]+)"|(\S+))/);
+  if (flag) {
+    const v = flag[1] || flag[2] || flag[3] || "";
+    if (v.includes("=")) return v.trim();
+  }
+
+  // An explicit "Cookie: ..." header line.
+  const hdr = t.match(/^\s*cookie\s*:\s*(.+)$/im);
+  if (hdr) return hdr[1].trim();
+
+  // A raw cookie string pasted on its own.
+  if (/^[^\s=;]+=[^;]*(;\s*[^\s=;]+=[^;]*)+/.test(t) || /\w+=[^;]+;/.test(t)) {
+    const oneLine = t.split(/[\r\n]/)[0].trim();
+    if (oneLine.includes("=")) return oneLine;
+  }
+
+  return "";
+}
+
+async function pasteCookies() {
+  const cookie = $("mCookie").value.trim();
+  if (!cookie) { toast("先粘贴 Cookie 内容", true); return; }
+  try {
+    const r = await api("/auth/manual", {
+      method: "POST",
+      body: JSON.stringify({ cookie, label: $("mLabel").value.trim() }),
+    });
+    $("mCookie").value = "";
+    if (r.warn) toast(r.warn, true); else toast("账号已保存");
+    loadAuth(); loadSessionsOnly(); loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function startAuth() {
+  try {
+    const r = await api("/auth/start", { method: "POST" });
+    toast(r.detail || "已打开登录窗口");
+    loadAuth();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function cancelAuth() {
+  try {
+    await api("/auth/cancel", { method: "POST" });
+    if (AUTH_POLL) { clearInterval(AUTH_POLL); AUTH_POLL = null; }
+    toast("已取消");
+    loadAuth();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderSessions(data) {
+  const list = data.sessions || [];
+  if (!list.length) {
+    $("sessBody").innerHTML = `<div class="empty">还没有可用的账号<br>
+      <span style="font-size:12px">完成上面的授权后，这里会显示账号状态</span></div>`;
+    return;
+  }
+  $("sessBody").innerHTML = `<table>
+    <thead><tr><th>账号</th><th>状态</th><th>成功</th><th>连续失败</th><th>冷却</th></tr></thead>
+    <tbody>${list.map(x => {
+      let pill = '<span class="pill on">● 可用</span>';
+      if (x.cooling_down) pill = `<span class="pill warn">冷却 ${x.cooldown_seconds_remaining}s</span>`;
+      else if (x.consecutive_failures > 2) pill = '<span class="pill bad">异常</span>';
+      return `<tr>
+        <td class="mono">${esc(x.label)}</td>
+        <td>${pill}</td>
+        <td>${num(x.successes)}</td>
+        <td>${num(x.consecutive_failures)}</td>
+        <td>${x.cooling_down ? x.cooldown_seconds_remaining + "s" : "—"}</td>
+      </tr>`;
+    }).join("")}</tbody></table>`;
+}
+
+/* ---------- key actions ---------- */
+async function createKey() {
+  const body = {
+    name: $("nName").value.trim() || "未命名",
+    quota_requests: parseInt($("nReqs").value || "0", 10),
+    quota_tokens: parseInt($("nTokens").value || "0", 10),
+    rate_limit_rpm: parseInt($("nRpm").value || "0", 10),
+    ttl_hours: parseInt($("nTtl").value || "0", 10),
+    note: $("nNote").value.trim(),
+  };
+  try {
+    const r = await api("/keys", { method: "POST", body: JSON.stringify(body) });
+    showSecret(r.secret, r.key);
+    $("nName").value = ""; $("nNote").value = "";
+    loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+function showSecret(secret, key) {
+  $("modal").innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <h2 style="margin-top:0">密钥已生成</h2>
+      <p class="sub" style="margin-top:0">「${esc(key.name)}」的新密钥：</p>
+      <div class="secret" id="newSecret">${esc(secret)}</div>
+      <p class="hint" style="color:var(--warn)">
+        只显示这一次。关掉就再也看不到了 —— 丢了只能「换密钥」重新生成。</p>
+      <div class="copyrow">
+        <button class="primary" onclick="cp('newSecret')">复制密钥</button>
+        <button onclick="closeModal()">关闭</button>
+      </div>
+    </div></div>`;
+}
+function closeModal() { $("modal").innerHTML = ""; }
+
+async function toggleKey(id, enabled) {
+  try {
+    await api("/keys/" + id, { method: "PATCH", body: JSON.stringify({ enabled }) });
+    toast(enabled ? "已启用" : "已停用");
+    loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function editKey(id) {
+  const k = STATE.keys.find(x => x.id === id); if (!k) return;
+  $("modal").innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <h2 style="margin-top:0">编辑「${esc(k.name)}」</h2>
+      <div class="field"><label>名称</label>
+        <input id="eName" value="${esc(k.name)}"></div>
+      <div class="field"><label>请求数上限（0 = 不限）</label>
+        <input id="eReqs" type="number" min="0" value="${k.quota_requests}"></div>
+      <div class="field"><label>Token 上限（0 = 不限）</label>
+        <input id="eTokens" type="number" min="0" value="${k.quota_tokens}"></div>
+      <div class="field"><label>每分钟请求数（0 = 不限）</label>
+        <input id="eRpm" type="number" min="0" value="${k.rate_limit_rpm}"></div>
+      <div class="field"><label>备注</label>
+        <input id="eNote" value="${esc(k.note || "")}"></div>
+      <div class="copyrow">
+        <button class="primary" onclick="saveEdit('${id}')">保存</button>
+        <button onclick="resetUsage('${id}')">清零用量</button>
+        <button onclick="closeModal()">取消</button>
+      </div>
+    </div></div>`;
+}
+
+async function saveEdit(id) {
+  const body = {
+    name: $("eName").value.trim(),
+    quota_requests: parseInt($("eReqs").value || "0", 10),
+    quota_tokens: parseInt($("eTokens").value || "0", 10),
+    rate_limit_rpm: parseInt($("eRpm").value || "0", 10),
+    note: $("eNote").value.trim(),
+  };
+  try {
+    await api("/keys/" + id, { method: "PATCH", body: JSON.stringify(body) });
+    closeModal(); toast("已保存"); loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function resetUsage(id) {
+  try {
+    await api("/keys/" + id + "/reset-usage", { method: "POST" });
+    toast("用量已清零"); closeModal(); loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function rotateKey(id) {
+  const k = STATE.keys.find(x => x.id === id); if (!k) return;
+  if (!confirm(`确定给「${k.name}」换一个新密钥？\n旧密钥会立刻失效。`)) return;
+  try {
+    const r = await api("/keys/" + id + "/rotate", { method: "POST" });
+    showSecret(r.secret, r.key);
+    loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function delKey(id) {
+  const k = STATE.keys.find(x => x.id === id); if (!k) return;
+  if (!confirm(`确定删除「${k.name}」？\n该密钥立刻失效，且无法恢复。`)) return;
+  try {
+    await api("/keys/" + id, { method: "DELETE" });
+    toast("已删除"); loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------- playground ---------- */
+let HISTORY = [];
+let STREAMING = false;
+
+function pushMsg(role, text) {
+  const box = $("pMsgs");
+  const empty = box.querySelector(".empty");
+  if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = "msg " + (role === "user" ? "u" : "a");
+  div.innerHTML = `<div class="who">${role === "user" ? "你" : "M"}</div>
+    <div class="body"></div>`;
+  div.querySelector(".body").textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div.querySelector(".body");
+}
+
+async function send() {
+  if (STREAMING) return;
+  const input = $("pInput");
+  const text = input.value.trim();
+  if (!text) return;
+
+  // The playground needs a real key's plaintext to exercise the public API.
+  // We only have hashes, so ask for one explicitly.
+  let secret = sessionStorage.getItem("mimo_test_key");
+  if (!secret) {
+    secret = prompt("测试台需要一串完整密钥来调用公开 API。\n" +
+      "粘贴任意一个 sk-mimo-... （只存在本标签页内存里）：");
+    if (!secret) return;
+    sessionStorage.setItem("mimo_test_key", secret.trim());
+    secret = secret.trim();
+  }
+
+  input.value = "";
+  pushMsg("user", text);
+  HISTORY.push({ role: "user", content: text });
+  const bodyEl = pushMsg("assistant", "");
+  const meta = $("pMeta");
+  meta.textContent = "请求中…";
+  STREAMING = true;
+  const t0 = performance.now();
+
+  try {
+    const resp = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + secret },
+      body: JSON.stringify({
+        model: $("pModel").value,
+        messages: HISTORY,
+        stream: true,
+        thinking: $("pThink").checked,
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      const m = (err.error && err.error.message) || ("HTTP " + resp.status);
+      if (resp.status === 401) sessionStorage.removeItem("mimo_test_key");
+      bodyEl.textContent = "✗ " + m;
+      bodyEl.style.color = "var(--bad)";
+      meta.textContent = "";
+      STREAMING = false;
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", full = "", ttft = 0, usage = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") continue;
+        let obj; try { obj = JSON.parse(payload); } catch { continue; }
+        const ch = obj.choices && obj.choices[0];
+        if (ch && ch.delta && ch.delta.content) {
+          if (!ttft) ttft = performance.now() - t0;
+          full += ch.delta.content;
+          // Reasoning text arrives inline; dim it so the answer stands out.
+          bodyEl.textContent = full;
+        }
+        if (obj.usage) usage = obj.usage;
+      }
+    }
+
+    HISTORY.push({ role: "assistant", content: full });
+    const total = ((performance.now() - t0) / 1000).toFixed(1);
+    meta.textContent = ttft
+      ? `首字 ${(ttft / 1000).toFixed(1)}s · 总耗时 ${total}s` +
+        (usage ? ` · ${num(usage.prompt_tokens)} 输入 / ${num(usage.completion_tokens)} 输出` : "")
+      : `总耗时 ${total}s`;
+  } catch (e) {
+    bodyEl.textContent = "✗ " + e.message;
+    bodyEl.style.color = "var(--bad)";
+    meta.textContent = "";
+  } finally {
+    STREAMING = false;
+    loadAll();  // usage counters changed
+  }
+}
+
+function newChat() {
+  HISTORY = [];
+  $("pMsgs").innerHTML =
+    `<div class="empty">发一条消息开始测试</div>`;
+  $("pMeta").textContent = "";
+}
+
+boot();
+</script>
+</body>
+</html>

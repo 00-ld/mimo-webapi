@@ -1,0 +1,71 @@
+services:
+  mimowebapi:
+    build: .
+    image: mimowebapi:latest
+    container_name: mimowebapi
+    restart: unless-stopped
+
+    # Ports is deliberately absent.
+    #
+    # Publishing this port exposes an interface that holds a live MiMo account
+    # session. On a single host the aggregator reaches the container by name
+    # over the compose network, so nothing needs to be published at all. To
+    # reach it from outside, add an explicit mapping bound to the loopback of
+    # the host:
+    #
+    #   ports:
+    #     - "127.0.0.1:8793:8793"
+    #
+    # Binding "0.0.0.0:8793:8793" makes the account reachable by anything that
+    # can route to this host.
+    expose:
+      - "8793"
+
+    volumes:
+      # config.json, keys.json and sessions.json all live here. The directory
+      # is mounted rather than the files, because the service writes keys.json
+      # and sessions.json at runtime and a single-file mount would not persist
+      # them under some drivers.
+      - ./data:/data
+      # The authorisation wizard drives a headless Chrome. A named volume
+      # keeps its profile across restarts so a login survives.
+      - chrome-profile:/chrome-profile
+      # Optional: reuse a Chrome installed on the host instead of the image's.
+      # - /usr/bin/chromium:/usr/bin/chromium:ro
+
+    environment:
+      # Listen on all interfaces inside the container only. Reachability from
+      # outside is controlled by the ports mapping above, which is the one
+      # place that decision should be made.
+      MIMO_RELAY_LISTEN: "0.0.0.0:8793"
+      # Everything below overrides config.json at startup, so the mounted file
+      # only needs the credentials.
+      #
+      # 0.0.0.0 is the correct inside-the-container bind: reachability from
+      # outside is decided by the ports mapping, not by this value.
+      MIMO_RELAY_ALLOW_NON_LOOPBACK_LISTEN: "true"
+      # Defaults for the wizard's browser profile location.
+      MIMO_RELAY_BROWSER_PROFILE_DIR: "/chrome-profile"
+      # Absolute paths, so the mounts are the only writable locations the
+      # process ever touches regardless of the working directory.
+      MIMO_RELAY_KEY_STORE: "/data/keys.json"
+      MIMO_RELAY_SESSION_DIR: "/data"
+      TZ: "Asia/Shanghai"
+
+    healthcheck:
+      test: ["CMD", "/mimowebapi", "-config", "/data/config.json", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+    # The process needs no privileges and no writable filesystem outside the
+    # mounted data directory.
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  chrome-profile:

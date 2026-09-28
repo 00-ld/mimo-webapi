@@ -1,0 +1,25 @@
+# Live credentials — never commit these.
+#
+# Anchored to the repo root on purpose: an unanchored `sessions.json` would
+# also match internal/httpapi/sessions.json, which is a test fixture the build
+# needs. Only the root-level copies hold live credentials.
+/config.json
+/keys.json
+*.cookies
+cookies.txt
+.client-token
+/sessions.json
+
+# The wizard's browser profile holds the logged-in MiMo session cookies.
+/chrome-profile/
+
+# Build output
+/mimowebapi
+/mimowebapi.exe
+/dist/
+
+# A previous release snapshot kept in-tree must never be published again.
+/mimo-webapi-release/
+/mimo-webapi-public/
+
+.DS_Store

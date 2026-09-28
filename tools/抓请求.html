@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>抓 MiMo 真实请求 — 30 秒</title>
+<style>
+ body{font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;
+      max-width:680px;margin:36px auto;padding:0 24px;color:#111}
+ @media(prefers-color-scheme:dark){body{background:#18181b;color:#eee}
+   .b{border-color:#ffffff22}.path,.cmd,kbd,textarea{background:#ffffff14;color:#eee}}
+ h1{font-size:21px;margin-bottom:2px}
+ .sub{color:#888;margin-top:0;font-size:13px}
+ .b{border:1px solid #8884;border-radius:12px;padding:18px 20px;margin:14px 0}
+ .b h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:9px}
+ .n{display:inline-flex;width:23px;height:23px;border-radius:50%;background:#38f;color:#fff;
+    align-items:center;justify-content:center;font-size:12px;flex:none;font-weight:700}
+ kbd{background:#8882;padding:2px 8px;border-radius:5px;font-family:ui-monospace,monospace;
+     font-size:12.5px;border:1px solid #8884}
+ .path{background:#8881;padding:11px 15px;border-radius:8px;
+       font-family:ui-monospace,monospace;font-size:13px;margin:9px 0}
+ .warn{background:#e8590c22;border-left:3px solid #e8590c;padding:11px 15px;
+       border-radius:0 8px 8px 0;font-size:13.5px;margin:12px 0}
+ .tip{background:#38f22;border-left:3px solid #38f;padding:11px 15px;
+      border-radius:0 8px 8px 0;font-size:13.5px;margin:12px 0}
+ .big{font-size:15.5px;font-weight:700;color:#e8590c}
+ code{background:#8882;padding:1px 6px;border-radius:4px;font-size:13px}
+ .cmd{background:#8881;padding:12px;border-radius:8px;font-family:ui-monospace,monospace;
+      font-size:12px;white-space:pre-wrap;word-break:break-all;margin:10px 0;
+      border:1px solid #8883;cursor:pointer;user-select:all}
+ button{font-size:14px;padding:10px 20px;border-radius:8px;border:0;background:#38f;
+        color:#fff;cursor:pointer;font-weight:600}
+ button:active{transform:translateY(1px)}
+ ol{padding-left:22px}ol li{margin:7px 0}
+ .k{background:#38f;color:#fff;padding:1px 7px;border-radius:4px;font-size:12.5px;font-weight:600}
+ .small{font-size:12.5px;color:#888}
+</style></head><body>
+
+<h1>抓 MiMo 真实请求</h1>
+<p class="sub">我需要看你浏览器里那个<strong>成功的</strong>请求长什么样。30 秒。</p>
+
+<div class="tip">
+  <strong>为什么</strong>：我把你给的 cookie 逐字符都对过了，值完全正确、账号也认。
+  但同一组 cookie，<code>user/mi/get</code> 能过、<code>bot/chat</code> 就是 401。
+  所以那个成功请求里一定有<strong>我没看到的东西</strong> —— 可能是某个 header、
+  某个 query 参数，或者是我没料到的 cookie。抓下来我就知道。
+</div>
+
+<div class="b">
+  <h2><span class="n">1</span>打开 MiMo，开 Network 面板</h2>
+  <ol>
+    <li>切到你的 <strong>aistudio.xiaomimimo.com</strong> 标签页</li>
+    <li>按 <kbd>F12</kbd>，切到 <span class="k">Network</span>（网络）标签</li>
+    <li>确认左上角那个红点/<kbd>●</kbd>是亮的（正在录制）</li>
+    <li>在过滤框里输入 <code>chat</code></li>
+  </ol>
+</div>
+
+<div class="b">
+  <h2><span class="n">2</span>发一条消息</h2>
+  <p>就随便发一句「你好」，等它答完。</p>
+  <p>Network 面板里会冒出一条名字叫 <code>chat</code> 的请求。</p>
+</div>
+
+<div class="b">
+  <h2><span class="n">3</span>右键 → 复制为 cURL</h2>
+  <ol>
+    <li>在 <code>chat</code> 那条请求上<strong>右键</strong></li>
+    <li>选 <strong>Copy</strong> → <strong>Copy as cURL</strong>
+        <br><span class="small">中文版：复制 → 以 cURL 格式复制</span></li>
+  </ol>
+  <div class="warn">
+    如果只有 <code>Copy as cURL (bash)</code> 和 <code>(cmd)</code> 两个选项，
+    选 <strong>bash</strong> 那个。
+  </div>
+  <p>复制出来的东西很长，里面就包含我要的全部信息。</p>
+</div>
+
+<div class="b">
+  <h2><span class="n">4</span>粘到下面，生成命令</h2>
+  <p class="small">这段 curl 里带着你的登录凭证，<strong>只在本机用</strong>。它会存到
+     <code>config.json</code>（权限 600），不外发。</p>
+  <textarea id="raw" placeholder="在这里 ⌘V 粘贴 Copy as cURL 的内容"></textarea>
+  <p><button onclick="mk()">生成命令</button> <span id="st"></span></p>
+  <div id="out" style="display:none">
+    <p style="margin-bottom:6px">复制这段，回终端粘上回车：</p>
+    <div class="cmd" id="cmdtext" onclick="sel(this)"></div>
+    <p><button onclick="cp()">复制命令</button> <span id="cpst"></span></p>
+  </div>
+</div>
+
+<div class="b">
+  <h2><span class="n">?</span>没有「chat」这条？</h2>
+  <p>那说明消息走的是别的路径。改成过滤 <code>open-apis</code>，
+     找那条 <code>POST</code> 的、类型是 <code>eventsource</code> 或
+     <code>fetch</code> 的请求，右键复制它。</p>
+</div>
+
+<script>
+function mk(){
+  var v = document.getElementById('raw').value.trim();
+  if(!v){ document.getElementById('st').textContent='先粘点东西'; return; }
+
+  // 从 curl 里抽 Cookie 头；抽不到就原样交给导出脚本处理
+  var m = v.match(/-H\s+['"]Cookie:\s*([^'"]+)['"]/i) ||
+          v.match(/--header\s+['"]Cookie:\s*([^'"]+)['"]/i);
+  var cookie = m ? m[1].trim() : '';
+
+  // 也抽出 --data-raw / -d 的 body，方便对比 payload
+  var d = v.match(/--data(?:-raw|-binary)?\s+['"]([\s\S]*?)['"]\s*(?:\\?\s*$|\n)/);
+  var body = d ? d[1] : '';
+
+  if(!cookie){
+    document.getElementById('st').innerHTML =
+      '<span style="color:#e8590c">✗ 没找到 Cookie 头 —— 是不是复制成别的格式了？</span>';
+    return;
+  }
+
+  var names = cookie.split(';').map(function(p){ return p.trim().split('=')[0]; }).filter(Boolean);
+  var cs = cookie.replace(/[\r\n]+/g, ' ').replace(/'/g, "'\\''");
+
+  var cmd = "cd ~/Desktop/AI_Lrean/mimo-webapi && python3 tools/export_cookies.py --force --cookie-string '" + cs + "'";
+  if (body) {
+    cmd += "\n\n# 这个请求的 payload（供参考，脚本不消耗它）：\n# " + body.replace(/\n/g,' ').slice(0,300);
+  }
+
+  document.getElementById('cmdtext').textContent = cmd;
+  document.getElementById('out').style.display = 'block';
+  document.getElementById('st').innerHTML = '<span style="color:#2f9e44">✓ 认出 '+names.length+' 个 cookie</span>';
+}
+
+function sel(el){ var r=document.createRange(); r.selectNodeContents(el);
+  var s=window.getSelection(); s.removeAllRanges(); s.addRange(r); }
+
+function cp(){
+  navigator.clipboard.writeText(document.getElementById('cmdtext').textContent)
+    .then(function(){ document.getElementById('cpst').textContent='✓ 已复制'; })
+    .catch(function(){ document.getElementById('cpst').textContent='复制失败 —— 点上面那段文本会全选，再 ⌘C'; });
+}
+</script></body></html>

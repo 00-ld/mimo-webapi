@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>取 MiMo Cookie — 照做就行</title>
+<style>
+ body{font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;
+      max-width:660px;margin:36px auto;padding:0 24px;color:#111}
+ @media(prefers-color-scheme:dark){body{background:#18181b;color:#eee}
+   .b{border-color:#ffffff22}.path,.cmd,kbd,textarea{background:#ffffff14;color:#eee}}
+ h1{font-size:21px;margin-bottom:2px}
+ .sub{color:#888;margin-top:0;font-size:13px}
+ .b{border:1px solid #8884;border-radius:12px;padding:18px 20px;margin:14px 0}
+ .b h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:9px}
+ .n{display:inline-flex;width:23px;height:23px;border-radius:50%;background:#38f;color:#fff;
+    align-items:center;justify-content:center;font-size:12px;flex:none;font-weight:700}
+ kbd{background:#8882;padding:2px 8px;border-radius:5px;font-family:ui-monospace,monospace;
+     font-size:12.5px;border:1px solid #8884}
+ .path{background:#8881;padding:11px 15px;border-radius:8px;
+       font-family:ui-monospace,monospace;font-size:13px;margin:9px 0}
+ .warn{background:#e8590c22;border-left:3px solid #e8590c;padding:11px 15px;
+       border-radius:0 8px 8px 0;font-size:13.5px;margin:12px 0}
+ .tip{background:#38f22;border-left:3px solid #38f;padding:11px 15px;
+      border-radius:0 8px 8px 0;font-size:13.5px;margin:12px 0}
+ .ok{color:#2f9e44;font-weight:600}
+ code{background:#8882;padding:1px 6px;border-radius:4px;font-size:13px}
+ textarea{width:100%;height:80px;font-family:ui-monospace,monospace;font-size:12px;padding:10px;
+          border-radius:8px;border:1px solid #8885;background:#8881;color:inherit;
+          box-sizing:border-box;resize:vertical}
+ .cmd{background:#8881;padding:12px;border-radius:8px;font-family:ui-monospace,monospace;
+      font-size:11.5px;white-space:pre-wrap;word-break:break-all;margin:10px 0;
+      border:1px solid #8883}
+ button{font-size:14px;padding:10px 20px;border-radius:8px;border:0;background:#38f;
+        color:#fff;cursor:pointer;font-weight:600}
+ button:active{transform:translateY(1px)}
+ ol{padding-left:22px}ol li{margin:7px 0}
+ .k{background:#38f;color:#fff;padding:1px 7px;border-radius:4px;font-size:12.5px;font-weight:600}
+ .small{font-size:12.5px;color:#888}
+</style></head><body>
+
+<h1>取 MiMo Cookie</h1>
+<p class="sub">你已经登录了（我看到你 Chrome 里那个 MiMo 标签页）。跟着做，两分钟。</p>
+
+<div class="tip">
+  <strong>先说关键</strong>：MiMo 的登录 cookie 是 <code>HttpOnly</code> 的，
+  所以对着控制台敲 <code>document.cookie</code> <strong>读不到它</strong>。
+  必须用下面这个面板。
+</div>
+
+<div class="b">
+  <h2><span class="n">1</span>切到 MiMo 标签页，开开发者工具</h2>
+  <p>点你那个 <strong>aistudio.xiaomimimo.com</strong> 标签页，按 <kbd>F12</kbd>
+     （或 <kbd>⌥⌘I</kbd>）。</p>
+</div>
+
+<div class="b">
+  <h2><span class="n">2</span>去 Application 面板</h2>
+  <ol>
+    <li>开发者工具顶部选 <span class="k">Application</span>（应用）
+        <br><span class="small">看不到？点最右的 <kbd>»</kbd> 展开更多</span></li>
+    <li>左侧找 <strong>Storage</strong> → <strong>Cookies</strong></li>
+    <li>点展开出的 <strong>https://aistudio.xiaomimimo.com</strong></li>
+    <li>右边列出全部 cookie —— <strong>这才是完整的一套</strong></li>
+  </ol>
+</div>
+
+<div class="b">
+  <h2><span class="n">3</span>全选复制</h2>
+  <p>在右边那堆 cookie 上：</p>
+  <ol>
+    <li>点第一行，<kbd>⌘A</kbd> 全选</li>
+    <li><kbd>⌘C</kbd> 复制</li>
+    <li>粘到下面框里，<strong>整块粘，不用整理</strong></li>
+  </ol>
+</div>
+
+<div class="b">
+  <h2><span class="n">4</span>生成命令</h2>
+  <textarea id="raw" placeholder="在这里 ⌘V 粘贴"></textarea>
+  <p><button onclick="mk()">生成命令</button> <span id="st"></span></p>
+  <div id="out" style="display:none">
+    <p style="margin-bottom:6px">复制这段，回终端粘上回车：</p>
+    <div class="cmd" id="cmdtext"></div>
+    <p><button onclick="cp()">复制命令</button> <span id="cpst"></span></p>
+  </div>
+</div>
+
+<div class="b">
+  <h2><span class="n">?</span>全选粘出来乱糟糟？</h2>
+  <p>那就手动凑成 <code>名字=值; 名字=值</code> 的格式，挑这些名字：</p>
+  <div class="path">serviceToken &nbsp; userId &nbsp; cUserId &nbsp; passToken &nbsp; deviceId &nbsp; muid &nbsp; ph</div>
+  <p class="small">带前缀的也算（如 <code>xiaomichatbot_serviceToken</code>）。
+     值通常是很长的乱码。<strong>全都要</strong>，少一个就可能 401。</p>
+</div>
+
+<script>
+function parse(raw){
+  var out=[];
+  raw.split('\n').forEach(function(line){
+    line=line.trim();
+    if(!line) return;
+    if(line.indexOf('\t')>=0){                 // DevTools 表格粘贴
+      var c=line.split('\t');
+      if(c.length>=2 && c[0] && c[1]) out.push(c[0].trim()+'='+c[1].trim());
+      return;
+    }
+    line.split(';').forEach(function(p){        // Cookie 头格式
+      p=p.trim();
+      if(p.indexOf('=')>0) out.push(p);
+    });
+  });
+  var seen={},res=[];
+  out.forEach(function(p){
+    var n=p.split('=')[0].trim();
+    if(n && !seen[n]){seen[n]=1;res.push(p);}
+  });
+  return res;
+}
+
+function mk(){
+  var v=document.getElementById('raw').value.trim();
+  if(!v){document.getElementById('st').textContent='先粘点东西';return;}
+  var cookies=parse(v);
+  if(!cookies.length){document.getElementById('st').textContent='没解析出 cookie，格式不对';return;}
+  var names=cookies.map(function(p){return p.split('=')[0].trim();});
+  var has=names.some(function(n){return n==='serviceToken'||n.endsWith('_serviceToken');});
+  var cs=cookies.join('; ');
+  document.getElementById('cmdtext').textContent=
+    "cd ~/Desktop/AI_Lrean/mimo-webapi && python3 tools/export_cookies.py --force --cookie-string '"
+    + cs.replace(/'/g,"'\\''") + "'";
+  document.getElementById('out').style.display='block';
+  document.getElementById('st').innerHTML = has
+    ? '<span class="ok">✓ 认出 '+cookies.length+' 个，含 serviceToken</span>'
+    : '<span style="color:#e8590c">⚠ 认出 '+cookies.length+' 个，但没看到 serviceToken</span>';
+}
+
+function cp(){
+  navigator.clipboard.writeText(document.getElementById('cmdtext').textContent)
+    .then(function(){document.getElementById('cpst').textContent='✓ 已复制';})
+    .catch(function(){document.getElementById('cpst').textContent='复制失败，手动选中';});
+}
+</script></body></html>
