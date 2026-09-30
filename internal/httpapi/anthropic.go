@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"mimowebapi/internal/upstream"
 )
@@ -254,7 +255,8 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 
 	id := newCompletionID("msg")
 	if req.Stream {
-		s.streamAnthropic(w, ctx, stream, id, model, defs)
+		s.streamAnthropic(w, ctx, stream, id, model, defs,
+			utf8.RuneCountInString(upReq.Query))
 		return
 	}
 	// A non-streaming reply can be inspected before anything is sent, so a
@@ -263,28 +265,19 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) thinkingFromAnthropic(req AnthropicRequest) bool {
-	if len(req.Thinking) == 0 {
-		return s.cfg.Behavior.EnableThinkingDefault
+	// Shares parseThinkingFlag with the OpenAI-compatible paths so all three
+	// protocols agree on what "thinking" means. Anthropic's native form is
+	// {"type":"enabled"|"disabled"}, which the shared parser handles.
+	if on, ok := parseThinkingFlag(req.Thinking); ok {
+		return on
 	}
-	var t struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(req.Thinking, &t); err != nil {
-		return s.cfg.Behavior.EnableThinkingDefault
-	}
-	switch strings.ToLower(t.Type) {
-	case "disabled", "off", "none":
-		return false
-	case "enabled", "on":
-		return true
-	default:
-		return s.cfg.Behavior.EnableThinkingDefault
-	}
+	return s.cfg.Behavior.EnableThinkingDefault
 }
 
 // streamAnthropic forwards frames as Anthropic streaming events.
 func (s *Server) streamAnthropic(w http.ResponseWriter, ctx context.Context,
-	stream *upstream.ChatStream, id, model string, defs []ToolDef) {
+	stream *upstream.ChatStream, id, model string, defs []ToolDef,
+	queryChars int) {
 
 	sw, err := newSSEWriter(w)
 	if err != nil {
@@ -407,13 +400,20 @@ func (s *Server) streamAnthropic(w http.ResponseWriter, ctx context.Context,
 				}
 			}
 		case frameError:
-			streamErr = fmt.Errorf("%s", frame.Content)
+			streamErr = upstreamFrameError(frame.Content,
+				queryChars, s.cfg.Upstream.MaxQueryChars)
 			stopReason = "end_turn"
 		case frameSensitiveQuery, frameSensitiveTitle:
 			stopReason = "refusal"
 		case frameTipTruncate:
 			stopReason = "max_tokens"
 		}
+	}
+
+	// A transport failure is surfaced as an error event below rather than
+	// being silently absorbed into a normal end_turn.
+	if err := stream.ReadError(); err != nil && streamErr == nil {
+		streamErr = err
 	}
 
 	// Release whatever the stripper held back in case it was the start of a
@@ -475,11 +475,42 @@ func (s *Server) streamAnthropic(w http.ResponseWriter, ctx context.Context,
 	s.recordUsage(ctx, usage)
 
 	if streamErr != nil {
-		s.log.Warn("anthropic stream finished with upstream error", "error", streamErr)
+		// The Anthropic stream contract has its own error event, and it must be
+		// emitted before message_stop: a client that only sees a stop_reason
+		// has nothing to branch on and will silently render an empty reply.
+		_, code, msg, _ := upstreamErrorShape(streamErr, s.cfg.Upstream.MaxQueryChars)
+		s.log.Warn("anthropic stream finished with upstream error",
+			"code", code, "error", streamErr)
+		_ = sw.event("error", map[string]any{
+			"type": "error",
+			"error": map[string]string{
+				"type":    anthErrorType(code),
+				"message": msg,
+			},
+		})
 		stream.Close(streamErr)
 		return
 	}
 	stream.Close(nil)
+}
+
+// anthErrorType maps a relay error code onto the Anthropic error taxonomy.
+//
+// Anthropic clients validate the inner `error.type` against a fixed set, so an
+// unknown value is a parse error rather than a useful message. The oversized
+// case maps onto the request-shape error, which is the class those clients
+// already treat as "the request itself is wrong".
+func anthErrorType(code string) string {
+	switch code {
+	case contextTooLongCode:
+		return "invalid_request_error"
+	case "cookies_expired":
+		return "authentication_error"
+	case "no_session":
+		return "overloaded_error"
+	default:
+		return "api_error"
+	}
 }
 
 // collectAnthropicWithRetry drains the stream into one Anthropic message, and
@@ -493,7 +524,7 @@ func (s *Server) collectAnthropicWithRetry(ctx context.Context, w http.ResponseW
 	stream *upstream.ChatStream, id, model string, req AnthropicRequest,
 	defs []ToolDef, upReq upstream.ChatRequest) {
 
-	raw, usage, stopReason, streamErr := drainAnthropic(stream)
+	raw, usage, stopReason, streamErr := s.drainAnthropic(stream, upReq)
 	if streamErr != nil {
 		s.writeAnthropicUpstreamError(w, streamErr)
 		return
@@ -508,7 +539,7 @@ func (s *Server) collectAnthropicWithRetry(ctx context.Context, w http.ResponseW
 		retryReq := upReq
 		retryReq.Query += toolRetryInstruction
 		if second, err := s.client.Chat(ctx, retryReq); err == nil {
-			raw2, usage2, stop2, err2 := drainAnthropic(second)
+			raw2, usage2, stop2, err2 := s.drainAnthropic(second, retryReq)
 			if err2 == nil {
 				text2, calls2, remaining2 := anthropicReply(raw2, defs)
 				if len(calls2) > 0 {
@@ -554,11 +585,13 @@ func anthropicReply(raw string, defs []ToolDef) (text string, calls []ToolCall, 
 }
 
 // drainAnthropic consumes a stream into its raw text and metadata.
-func drainAnthropic(stream *upstream.ChatStream) (string, *Usage, string, error) {
+func (s *Server) drainAnthropic(stream *upstream.ChatStream,
+	upReq upstream.ChatRequest) (string, *Usage, string, error) {
 	var raw strings.Builder
 	var usage *Usage
 	var streamErr error
 	stopReason := "end_turn"
+	queryChars := utf8.RuneCountInString(upReq.Query)
 
 	for frame := range stream.Frames {
 		switch frame.Event {
@@ -573,22 +606,31 @@ func drainAnthropic(stream *upstream.ChatStream) (string, *Usage, string, error)
 				}
 			}
 		case frameError:
-			streamErr = fmt.Errorf("%s", frame.Content)
+			streamErr = upstreamFrameError(frame.Content,
+				queryChars, s.cfg.Upstream.MaxQueryChars)
 		case frameSensitiveQuery, frameSensitiveTitle:
 			stopReason = "refusal"
 		case frameTipTruncate:
 			stopReason = "max_tokens"
 		}
 	}
+	// A truncated transport must not be reported as a completed turn.
+	if err := stream.ReadError(); err != nil && streamErr == nil {
+		streamErr = err
+	}
 	stream.Close(streamErr)
 	return raw.String(), usage, stopReason, streamErr
 }
 
 // collectAnthropic drains the stream into one Anthropic message.
+//
+// It takes the originating upstream request so an in-stream failure can be
+// classified against the same query length the request was built with.
 func (s *Server) collectAnthropic(ctx context.Context, w http.ResponseWriter,
-	stream *upstream.ChatStream, id, model string, req AnthropicRequest, defs []ToolDef) {
+	stream *upstream.ChatStream, id, model string, req AnthropicRequest, defs []ToolDef,
+	upReq upstream.ChatRequest) {
 
-	raw, usage, stopReason, streamErr := drainAnthropic(stream)
+	raw, usage, stopReason, streamErr := s.drainAnthropic(stream, upReq)
 	if streamErr != nil {
 		s.writeAnthropicUpstreamError(w, streamErr)
 		return
@@ -618,7 +660,8 @@ func (s *Server) collectAnthropic(ctx context.Context, w http.ResponseWriter,
 }
 
 func (s *Server) writeAnthropicUpstreamError(w http.ResponseWriter, err error) {
-	writeAnthropicError(w, http.StatusBadGateway, "api_error", err.Error())
+	status, code, msg, _ := upstreamErrorShape(err, s.cfg.Upstream.MaxQueryChars)
+	writeAnthropicError(w, status, anthErrorType(code), msg)
 }
 
 // writeAnthropicError emits the Anthropic error envelope.

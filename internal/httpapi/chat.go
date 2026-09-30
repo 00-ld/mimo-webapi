@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"mimowebapi/internal/apikeys"
 	"mimowebapi/internal/config"
@@ -391,7 +393,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	id := newCompletionID("chatcmpl")
 	if req.Stream {
-		s.streamOpenAI(w, ctx, stream, id, model, defs)
+		s.streamOpenAI(w, ctx, stream, id, model, defs,
+			utf8.RuneCountInString(upReq.Query))
 		return
 	}
 
@@ -401,8 +404,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) thinkingEnabled(req ChatCompletionRequest) bool {
-	if req.Thinking != nil {
-		return *req.Thinking
+	// `thinking` wins over `reasoning_effort` when both are present: it is the
+	// explicit toggle, whereas effort is a hint the model may ignore.
+	if on, ok := parseThinkingFlag(req.Thinking); ok {
+		return on
 	}
 	switch strings.ToLower(req.ReasoningEffort) {
 	case "none", "off", "disabled":
@@ -412,6 +417,67 @@ func (s *Server) thinkingEnabled(req ChatCompletionRequest) bool {
 	default:
 		return true
 	}
+}
+
+// parseThinkingFlag interprets the `thinking` field, which clients send in
+// several incompatible shapes.
+//
+// The field is not part of the OpenAI specification, so every client that
+// supports it invented its own encoding:
+//
+//	true / false                                  a plain boolean
+//	{"type":"enabled"} / {"type":"disabled"}      Anthropic-style discriminator
+//	{"enabled":true}                              alternate object spelling
+//
+// All of them mean the same thing, and none of them is worth failing a request
+// over. The second return value reports whether the field was present and
+// recognisable, so the caller can fall back to its own default instead of
+// silently treating an unparseable value as "off".
+func parseThinkingFlag(raw json.RawMessage) (on, ok bool) {
+	if len(raw) == 0 {
+		return false, false
+	}
+	// An explicit JSON null means "not set", which is different from false:
+	// the caller should fall through to its own default rather than treat it
+	// as a request to disable reasoning.
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return false, false
+	}
+	// A bare boolean is the simplest and most common case.
+	var b bool
+	if err := json.Unmarshal(raw, &b); err == nil {
+		return b, true
+	}
+	// An object: read whichever discriminator it carries.
+	var obj struct {
+		Type    string `json:"type"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		switch strings.ToLower(strings.TrimSpace(obj.Type)) {
+		case "enabled", "on", "true":
+			return true, true
+		case "disabled", "off", "none", "false":
+			return false, true
+		}
+		if obj.Enabled != nil {
+			return *obj.Enabled, true
+		}
+		// An object with no discriminator at all ({}) still means the client
+		// opted into the feature by sending the field.
+		return true, true
+	}
+	// A quoted string ("true"/"enabled") is accepted as a final fallback.
+	var str string
+	if err := json.Unmarshal(raw, &str); err == nil {
+		switch strings.ToLower(strings.TrimSpace(str)) {
+		case "true", "enabled", "on", "yes":
+			return true, true
+		case "false", "disabled", "off", "no":
+			return false, true
+		}
+	}
+	return false, false
 }
 
 func (s *Server) webSearchStatus(req ChatCompletionRequest) string {
@@ -429,7 +495,8 @@ func (s *Server) webSearchStatus(req ChatCompletionRequest) string {
 
 // streamOpenAI forwards upstream frames as OpenAI streaming chunks.
 func (s *Server) streamOpenAI(w http.ResponseWriter, ctx context.Context,
-	stream *upstream.ChatStream, id, model string, defs []ToolDef) {
+	stream *upstream.ChatStream, id, model string, defs []ToolDef,
+	queryChars int) {
 
 	sw, err := newSSEWriter(w)
 	if err != nil {
@@ -512,7 +579,8 @@ func (s *Server) streamOpenAI(w http.ResponseWriter, ctx context.Context,
 				usage = u
 			}
 		case frameError:
-			streamErr = fmt.Errorf("%s", frame.Content)
+			streamErr = upstreamFrameError(frame.Content,
+				queryChars, s.cfg.Upstream.MaxQueryChars)
 			finishReason = "error"
 		case frameSensitiveQuery, frameSensitiveTitle:
 			finishReason = "content_filter"
@@ -522,6 +590,14 @@ func (s *Server) streamOpenAI(w http.ResponseWriter, ctx context.Context,
 			// Metadata that has no OpenAI equivalent. Dropping it is correct:
 			// inventing a field would break strict SDK parsers.
 		}
+	}
+
+	// A read failure that cut the stream short is reported in-band below,
+	// exactly like an upstream error frame. Leaving it undetected would let a
+	// truncated answer reach the client as a normal stop.
+	if err := stream.ReadError(); err != nil && streamErr == nil {
+		streamErr = err
+		finishReason = "error"
 	}
 
 	// The stripper holds back a few trailing bytes in case they are the start
@@ -600,19 +676,39 @@ func (s *Server) streamOpenAI(w http.ResponseWriter, ctx context.Context,
 	if usage != nil {
 		final.Usage = usage
 	}
+	// An upstream failure discovered mid-stream is reported before the
+	// terminator, not instead of it.
+	//
+	// The status line was committed when the first chunk was flushed, so the
+	// failure can only travel in-band. Emitting it as a typed `error` event is
+	// what makes an agent notice: a client that receives finish_reason=error
+	// and then `[DONE]` has no status code, no code and no message to branch
+	// on, so it renders an empty reply and retries — which is exactly the
+	// loop an oversized conversation used to get stuck in. Streaming an
+	// OpenAI-shaped error object before `[DONE]` is the documented pattern and
+	// the one SDKs already parse.
+	if streamErr != nil {
+		_, code, msg, param := upstreamErrorShape(streamErr, s.cfg.Upstream.MaxQueryChars)
+		if code == "upstream_failed" {
+			s.log.Warn("stream finished with upstream error", "error", streamErr)
+		} else {
+			s.log.Warn("stream rejected by upstream", "code", code, "error", streamErr)
+		}
+		_ = sw.event("", errorBody{Error: errorDetail{
+			Message: msg, Type: "upstream_error", Code: code, Param: param,
+		}})
+		_ = sw.raw("[DONE]")
+		_ = sw.heartbeat()
+		s.recordUsage(ctx, usage)
+		stream.Close(streamErr)
+		return
+	}
+
 	_ = sw.event("", final)
 	// The terminator must be the literal `[DONE]` token, not a JSON string.
 	_ = sw.raw("[DONE]")
 
 	s.recordUsage(ctx, usage)
-
-	if streamErr != nil {
-		// The stream is already committed, so the error can only be reported
-		// in-band; the finish_reason above carries the failure.
-		s.log.Warn("stream finished with upstream error", "error", streamErr)
-		stream.Close(streamErr)
-		return
-	}
 	stream.Close(nil)
 }
 
@@ -645,10 +741,9 @@ func (s *Server) collectOpenAIWithRetry(w http.ResponseWriter, ctx context.Conte
 	stream *upstream.ChatStream, id, model string, req ChatCompletionRequest,
 	defs []ToolDef, upReq upstream.ChatRequest) {
 
-	raw, usage, finishReason, streamErr := drainOpenAI(stream)
+	raw, usage, finishReason, streamErr := s.drainOpenAI(stream, upReq)
 	if streamErr != nil {
-		writeError(w, http.StatusBadGateway, "upstream_error", "upstream_failed",
-			streamErr.Error())
+		s.writeUpstreamError(w, streamErr)
 		return
 	}
 
@@ -662,7 +757,7 @@ func (s *Server) collectOpenAIWithRetry(w http.ResponseWriter, ctx context.Conte
 		retryReq := upReq
 		retryReq.Query += toolRetryInstruction
 		if second, err := s.client.Chat(ctx, retryReq); err == nil {
-			raw2, usage2, finish2, err2 := drainOpenAI(second)
+			raw2, usage2, finish2, err2 := s.drainOpenAI(second, retryReq)
 			if err2 == nil {
 				_, text2 := splitThink(raw2)
 				if calls2, remaining2 := parseToolCalls(text2, defs); len(calls2) > 0 {
@@ -677,11 +772,16 @@ func (s *Server) collectOpenAIWithRetry(w http.ResponseWriter, ctx context.Conte
 }
 
 // drainOpenAI consumes a stream into its raw text and metadata.
-func drainOpenAI(stream *upstream.ChatStream) (string, *Usage, string, error) {
+//
+// It is a method rather than a free function so an in-stream failure can be
+// classified with the same config the request was built from.
+func (s *Server) drainOpenAI(stream *upstream.ChatStream,
+	upReq upstream.ChatRequest) (string, *Usage, string, error) {
 	var raw strings.Builder
 	var usage *Usage
 	finishReason := "stop"
 	var streamErr error
+	queryChars := utf8.RuneCountInString(upReq.Query)
 
 	for frame := range stream.Frames {
 		switch frame.Event {
@@ -696,7 +796,8 @@ func drainOpenAI(stream *upstream.ChatStream) (string, *Usage, string, error) {
 				}
 			}
 		case frameError:
-			streamErr = fmt.Errorf("%s", frame.Content)
+			streamErr = upstreamFrameError(frame.Content,
+				queryChars, s.cfg.Upstream.MaxQueryChars)
 			finishReason = "error"
 		case frameSensitiveQuery, frameSensitiveTitle:
 			finishReason = "content_filter"
@@ -704,64 +805,15 @@ func drainOpenAI(stream *upstream.ChatStream) (string, *Usage, string, error) {
 		case frameDialogID, frameWebSearch, frameDoc, frameTipRatio, frameTipTruncate:
 		}
 	}
+	// A transport failure that ended the stream early must not be reported as
+	// a finished reply: the caller would present half a generation as though
+	// the model had chosen to stop there.
+	if err := stream.ReadError(); err != nil && streamErr == nil {
+		streamErr = err
+		finishReason = "error"
+	}
 	stream.Close(streamErr)
 	return raw.String(), usage, finishReason, streamErr
-}
-
-// collectOpenAI drains the stream into a single non-streaming response.
-func (s *Server) collectOpenAI(w http.ResponseWriter, ctx context.Context,
-	stream *upstream.ChatStream, id, model string, req ChatCompletionRequest, defs []ToolDef) {
-
-	var raw strings.Builder
-	var usage *Usage
-	finishReason := "stop"
-	var streamErr error
-
-	for frame := range stream.Frames {
-		switch frame.Event {
-		case frameMessage:
-			// Split after the whole stream has been read, not per frame: a
-			// marker can straddle two frames, and splitting each one
-			// independently leaves half a tag in the text.
-			raw.WriteString(frame.Content)
-		case frameUsage:
-			if frame.Usage != nil {
-				usage = &Usage{
-					PromptTokens:     frame.Usage.PromptTokens,
-					CompletionTokens: frame.Usage.CompletionTokens,
-					TotalTokens:      frame.Usage.TotalTokens,
-				}
-			}
-		case frameError:
-			streamErr = fmt.Errorf("%s", frame.Content)
-		case frameSensitiveQuery, frameSensitiveTitle:
-			finishReason = "content_filter"
-		}
-	}
-
-	if streamErr != nil {
-		stream.Close(streamErr)
-		if upstream.IsAuthError(streamErr) {
-			writeError(w, http.StatusBadGateway, "upstream_error",
-				"session_invalid", "upstream session rejected")
-			return
-		}
-		writeError(w, http.StatusBadGateway, "upstream_error", "upstream_failed",
-			streamErr.Error())
-		return
-	}
-	stream.Close(nil)
-	s.recordUsage(ctx, usage)
-
-	_, text := splitThink(raw.String())
-
-	// The model answers in prose unless it wants a tool. When it wants one the
-	// reply is an envelope, and that has to become a structured tool_calls
-	// field rather than being passed through as text — a client that receives
-	// the envelope as content simply prints it.
-	calls, remaining := parseToolCalls(text, defs)
-
-	s.writeOpenAIResult(w, id, model, req, raw.String(), text, remaining, calls, usage, finishReason)
 }
 
 // writeOpenAIResult assembles and emits the non-streaming response.
@@ -805,23 +857,87 @@ func (s *Server) writeOpenAIResult(w http.ResponseWriter, id, model string,
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// errorBody is the OpenAI-shaped error envelope.
+//
+// It is named so the same envelope can be written to a normal response and,
+// on the streaming path, embedded in an SSE `error` event after the status
+// line has already been committed.
+type errorBody struct {
+	Error errorDetail `json:"error"`
+}
+
+type errorDetail struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	// Param names the request field at fault, when one exists. Clients that
+	// understand it can point the user at the right input instead of
+	// surfacing a bare message.
+	Param string `json:"param,omitempty"`
+}
+
+// contextTooLongCode is the machine-readable code for an oversized request.
+//
+// The spelling matches the OpenAI platform's own error code
+// (`context_length_exceeded`) so SDKs and agent harnesses that branch on it
+// (DSH's overflow recovery, for example) recognise the condition without
+// being taught a new string. That recognition is the whole point: it is what
+// turns a silent retry loop into a context compaction.
+const contextTooLongCode = "context_length_exceeded"
+
 // writeUpstreamError maps an upstream failure onto an OpenAI-shaped error.
 func (s *Server) writeUpstreamError(w http.ResponseWriter, err error) {
+	status, code, msg, param := upstreamErrorShape(err, s.cfg.Upstream.MaxQueryChars)
+	if status == http.StatusBadGateway && code == "upstream_failed" {
+		s.log.Error("upstream request failed", "error", err)
+	}
+	writeErrorParam(w, status, "upstream_error", code, msg, param)
+}
+
+// upstreamErrorShape classifies an upstream failure into the status and
+// machine-readable code the client should see.
+//
+// The distinction that matters operationally is retryable vs permanent. An
+// oversized request is permanent and client-fixable, so it must NOT be
+// reported as 502: every OpenAI-compatible client retries a 502, which makes
+// an oversized conversation retry the identical payload forever instead of
+// compacting. 400 plus `context_length_exceeded` is the signal agents already
+// know how to act on.
+func upstreamErrorShape(err error, limit int) (status int, code, msg, param string) {
 	switch {
 	case errors.Is(err, session.ErrNoSession):
-		writeError(w, http.StatusServiceUnavailable, "upstream_error",
-			"no_session", "no upstream session configured or all are cooling down")
+		return http.StatusServiceUnavailable, "no_session",
+			"no upstream session configured or all are cooling down", ""
+	case upstream.IsQueryTooLong(err):
+		text := "the composed prompt exceeds the MiMo web backend limit"
+		if limit > 0 {
+			text = fmt.Sprintf(
+				"the composed prompt exceeds the MiMo web backend limit of %d characters; "+
+					"shorten the conversation or enable automatic context compaction", limit)
+		}
+		return http.StatusBadRequest, contextTooLongCode, text, "messages"
 	case upstream.IsBannedError(err):
-		writeError(w, http.StatusBadGateway, "upstream_error",
-			"account_banned", "the MiMo account for this session is blocked")
+		return http.StatusBadGateway, "account_banned",
+			"the MiMo account for this session is blocked", ""
 	case upstream.IsAuthError(err):
-		writeError(w, http.StatusBadGateway, "upstream_error",
-			"cookies_expired", "MiMo session cookies are missing or expired; re-export them")
+		return http.StatusBadGateway, "cookies_expired",
+			"MiMo session cookies are missing or expired; re-export them", ""
 	default:
-		s.log.Error("upstream request failed", "error", err)
-		writeError(w, http.StatusBadGateway, "upstream_error",
-			"upstream_failed", err.Error())
+		return http.StatusBadGateway, "upstream_failed", err.Error(), ""
 	}
+}
+
+// upstreamFrameError converts an in-stream `error` frame into a typed error.
+//
+// The frame carries only prose, so an over-length rejection that arrives
+// mid-stream would otherwise be indistinguishable from a transport failure
+// and would be logged and retried as one. Re-deriving the type here keeps the
+// classification identical on both the pre-flight and in-stream paths.
+func upstreamFrameError(content string, queryChars, limit int) error {
+	if upstream.LooksQueryTooLong(content) {
+		return upstream.NewQueryTooLong(content, queryChars, limit)
+	}
+	return fmt.Errorf("%s", content)
 }
 
 // toTurns normalizes inbound messages into upstream turns.

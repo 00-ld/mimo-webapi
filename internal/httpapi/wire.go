@@ -79,7 +79,18 @@ type ChatCompletionRequest struct {
 	// OpenAI-compatible servers, so a client can set them without breaking
 	// portability.
 	WebSearch *bool `json:"web_search,omitempty"`
-	Thinking  *bool `json:"thinking,omitempty"`
+
+	// Thinking is the reasoning toggle. It is deliberately RawMessage rather
+	// than *bool because clients send it in two incompatible shapes:
+	//
+	//	"thinking": true                                  (simple boolean)
+	//	"thinking": {"type":"enabled","budget_tokens":4096} (Anthropic-style)
+	//
+	// Typing it as *bool makes the second form a decode error that fails the
+	// whole request — "cannot unmarshal object into Go struct field
+	// ChatCompletionRequest.thinking of type bool" — which is a hard failure
+	// for a field the relay can simply interpret. See thinkingEnabled.
+	Thinking json.RawMessage `json:"thinking,omitempty"`
 }
 
 // ChatCompletion is the non-streaming OpenAI response.
@@ -158,6 +169,9 @@ type ErrorBody struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
 	Code    string `json:"code,omitempty"`
+	// Param names the offending request field, when there is one. Strict
+	// SDKs ignore an unknown key, so emitting it only when known is safe.
+	Param string `json:"param,omitempty"`
 }
 
 // writeError emits an OpenAI-shaped error.
@@ -166,7 +180,14 @@ type ErrorBody struct {
 // error rather than a transport failure: auth problems are 401, upstream
 // exhaustion is 502, malformed input is 400.
 func writeError(w http.ResponseWriter, status int, typ, code, msg string) {
-	writeJSON(w, status, APIError{ErrorBody{Message: msg, Type: typ, Code: code}})
+	writeErrorParam(w, status, typ, code, msg, "")
+}
+
+// writeErrorParam emits an OpenAI-shaped error naming the offending field.
+func writeErrorParam(w http.ResponseWriter, status int, typ, code, msg, param string) {
+	writeJSON(w, status, APIError{ErrorBody{
+		Message: msg, Type: typ, Code: code, Param: param,
+	}})
 }
 
 // sseWriter owns framing of Server-Sent Events to the client.

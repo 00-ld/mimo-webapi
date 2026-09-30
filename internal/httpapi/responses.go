@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"mimowebapi/internal/upstream"
 )
@@ -47,7 +48,9 @@ type ResponsesRequest struct {
 	// Extensions shared with the chat endpoint, so a client can use the same
 	// config regardless of which API it speaks.
 	WebSearch *bool `json:"web_search,omitempty"`
-	Thinking  *bool `json:"thinking,omitempty"`
+	// Thinking accepts both a bare boolean and an object; see
+	// parseThinkingFlag for why it is not typed as bool.
+	Thinking json.RawMessage `json:"thinking,omitempty"`
 
 	// Tools are declared by the client and reconstructed by the relay, since
 	// the upstream accepts only a plain-text query.
@@ -455,15 +458,16 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	id := newResponseID()
 	if req.Stream {
-		s.streamResponses(w, ctx, stream, id, model, defs)
+		s.streamResponses(w, ctx, stream, id, model, defs,
+			utf8.RuneCountInString(upReq.Query))
 		return
 	}
 	s.collectResponsesWithRetry(w, ctx, stream, id, model, defs, upReq)
 }
 
 func (s *Server) responsesThinkingEnabled(req ResponsesRequest) bool {
-	if req.Thinking != nil {
-		return *req.Thinking
+	if on, ok := parseThinkingFlag(req.Thinking); ok {
+		return on
 	}
 	effort := ""
 	if req.Reasoning != nil {
@@ -492,14 +496,20 @@ func (s *Server) responsesWebSearchStatus(req ResponsesRequest) string {
 	return s.cfg.Behavior.WebSearchDefault
 }
 
-// collectResponses drains the upstream stream into one response object.
 // collectResponsesWithRetry buffers the reply and retries once with a format
 // correction when a tool call was attempted but could not be parsed.
 func (s *Server) collectResponsesWithRetry(w http.ResponseWriter, ctx context.Context,
 	stream *upstream.ChatStream, id, model string, defs []ToolDef,
 	upReq upstream.ChatRequest) {
 
-	raw, usage, _, _ := drainOpenAI(stream)
+	raw, usage, _, drainErr := s.drainOpenAI(stream, upReq)
+	if drainErr != nil {
+		// A failure discovered mid-stream is classified exactly as it is on
+		// every other path, so an oversized conversation reports
+		// context_length_exceeded rather than a generic upstream failure.
+		s.writeUpstreamError(w, drainErr)
+		return
+	}
 	_, answer := splitThink(raw)
 	calls, remaining := parseToolCalls(answer, defs)
 
@@ -507,7 +517,7 @@ func (s *Server) collectResponsesWithRetry(w http.ResponseWriter, ctx context.Co
 		retryReq := upReq
 		retryReq.Query += toolRetryInstruction
 		if second, err := s.client.Chat(ctx, retryReq); err == nil {
-			raw2, usage2, _, _ := drainOpenAI(second)
+			raw2, usage2, _, _ := s.drainOpenAI(second, retryReq)
 			_, answer2 := splitThink(raw2)
 			if calls2, remaining2 := parseToolCalls(answer2, defs); len(calls2) > 0 {
 				usage = usage2
@@ -521,57 +531,6 @@ func (s *Server) collectResponsesWithRetry(w http.ResponseWriter, ctx context.Co
 		newResponseObjectWithCalls(id, model, remaining, usage, calls))
 }
 
-func (s *Server) collectResponses(w http.ResponseWriter, ctx context.Context,
-	stream *upstream.ChatStream, id, model string, defs []ToolDef) {
-
-	var text strings.Builder
-	var usage *Usage
-	var streamErr error
-
-	for frame := range stream.Frames {
-		switch frame.Event {
-		case frameMessage:
-			text.WriteString(frame.Content)
-		case frameUsage:
-			if frame.Usage != nil {
-				usage = &Usage{
-					PromptTokens:     frame.Usage.PromptTokens,
-					CompletionTokens: frame.Usage.CompletionTokens,
-					TotalTokens:      frame.Usage.TotalTokens,
-				}
-			}
-		case frameError:
-			streamErr = fmt.Errorf("%s", frame.Content)
-		}
-	}
-
-	if streamErr != nil {
-		stream.Close(streamErr)
-		if upstream.IsAuthError(streamErr) {
-			writeError(w, http.StatusBadGateway, "upstream_error",
-				"session_invalid", "upstream session rejected")
-			return
-		}
-		writeError(w, http.StatusBadGateway, "upstream_error", "upstream_failed",
-			streamErr.Error())
-		return
-	}
-	stream.Close(nil)
-	s.recordUsage(ctx, usage)
-
-	// The upstream interleaves its scratchpad with the answer; this API has no
-	// field to carry reasoning, so only the answer is returned.
-	_, answer := splitThink(text.String())
-
-	// A reply that names a tool becomes a function_call output item. Leaving
-	// it as text would make the client print the envelope instead of running
-	// the tool.
-	calls, remaining := parseToolCalls(answer, defs)
-
-	writeJSON(w, http.StatusOK,
-		newResponseObjectWithCalls(id, model, remaining, usage, calls))
-}
-
 // streamResponses emits the typed event sequence this API requires.
 //
 // The order is fixed by the spec and clients rely on it: created, an
@@ -580,7 +539,8 @@ func (s *Server) collectResponses(w http.ResponseWriter, ctx context.Context,
 // Skipping the bookkeeping events leaves a client waiting for a terminal state
 // that never arrives.
 func (s *Server) streamResponses(w http.ResponseWriter, ctx context.Context,
-	stream *upstream.ChatStream, id, model string, defs []ToolDef) {
+	stream *upstream.ChatStream, id, model string, defs []ToolDef,
+	queryChars int) {
 
 	sw, err := newSSEWriter(w)
 	if err != nil {
@@ -675,19 +635,33 @@ func (s *Server) streamResponses(w http.ResponseWriter, ctx context.Context,
 				}
 			}
 		case frameError:
-			streamErr = fmt.Errorf("%s", frame.Content)
+			streamErr = upstreamFrameError(frame.Content,
+				queryChars, s.cfg.Upstream.MaxQueryChars)
 		}
+	}
+
+	// A read failure means the reply is incomplete; it is reported through the
+	// same error event as an upstream error frame so it cannot be mistaken for
+	// a finished response.
+	if err := stream.ReadError(); err != nil && streamErr == nil {
+		streamErr = err
 	}
 
 	if streamErr != nil {
 		stream.Close(streamErr)
 		// The stream is already open and committed to 200, so the failure is
-		// reported as an event rather than a status code.
+		// reported as an event rather than a status code. The code carries the
+		// classification, so an oversized request is reported as
+		// context_length_exceeded and the client can compact instead of
+		// retrying the same payload.
+		_, code, msg, _ := upstreamErrorShape(streamErr, s.cfg.Upstream.MaxQueryChars)
+		s.log.Warn("responses stream finished with upstream error",
+			"code", code, "error", streamErr)
 		_ = sw.event("error", map[string]any{
 			"type": "error",
 			"error": responseError{
-				Code:    "upstream_error",
-				Message: streamErr.Error(),
+				Code:    code,
+				Message: msg,
 			},
 		})
 		return
