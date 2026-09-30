@@ -187,3 +187,23 @@ func TestResolveModelAlias(t *testing.T) {
 		t.Errorf("passthrough broken: %q", got)
 	}
 }
+
+// A negative query ceiling is a configuration mistake, not a way to disable
+// the guard: 0 is the documented off switch, so anything below it must be
+// rejected at boot rather than silently disabling the protection.
+func TestValidateRejectsNegativeMaxQueryChars(t *testing.T) {
+	c := validConfig()
+	c.Upstream.MaxQueryChars = -1
+	if err := c.Validate(); err == nil {
+		t.Fatal("negative max_query_chars was accepted")
+	}
+}
+
+// Zero is the documented way to defer entirely to the backend.
+func TestValidateAcceptsZeroMaxQueryChars(t *testing.T) {
+	c := validConfig()
+	c.Upstream.MaxQueryChars = 0
+	if err := c.Validate(); err != nil {
+		t.Fatalf("0 must disable the guard, got: %v", err)
+	}
+}

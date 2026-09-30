@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"mimowebapi/internal/config"
 	"mimowebapi/internal/session"
@@ -219,13 +220,105 @@ func IsBannedError(err error) bool {
 	return false
 }
 
+// QueryTooLongError reports that the composed query exceeded the web
+// backend's per-request text ceiling.
+//
+// This is neither a transport failure nor an upstream outage: the backend
+// answers in well under a second with a normal 200 and a well-formed `error`
+// frame. It is a deterministic property of the request, so it must never be
+// classified as retryable — a client that retries it simply resends the
+// identical oversized payload forever instead of compacting its history.
+//
+// It is deliberately a distinct type rather than a *BackendError: the
+// condition is discovered inside the SSE stream, so it has no HTTP status of
+// its own to carry.
+type QueryTooLongError struct {
+	// Message is the backend's own wording, preserved for the operator.
+	Message string
+	// QueryChars is the composed query length that was rejected.
+	QueryChars int
+	// Limit is the ceiling the relay enforces, when known.
+	Limit int
+}
+
+func (e *QueryTooLongError) Error() string {
+	if e.Limit > 0 {
+		return fmt.Sprintf("query too long: %d characters sent, upstream accepts about %d",
+			e.QueryChars, e.Limit)
+	}
+	return fmt.Sprintf("query too long: %d characters sent; %s", e.QueryChars, e.Message)
+}
+
+// IsQueryTooLong reports whether the upstream rejected the request purely
+// because the composed query was too large.
+func IsQueryTooLong(err error) bool {
+	var q *QueryTooLongError
+	return errors.As(err, &q)
+}
+
+// tooLongMarkers are the backend's own phrasings for an over-length query.
+//
+// The backend answers with HTTP 200 and an ordinary SSE stream whose `error`
+// frame carries this prose, so the message is the only available signal.
+// Matching uses stable fragments rather than the whole sentence: the trailing
+// advice is marketing copy that can be reworded at any time.
+var tooLongMarkers = []string{
+	"文本超长",
+	"内容超长",
+	"超长啦",
+	"text too long",
+	"too long",
+	"context length exceeded",
+	"maximum context length",
+	"reduce the length",
+}
+
+// LooksQueryTooLong reports whether an upstream error message is the
+// over-length rejection. It is exported so the HTTP layer can reclassify a
+// failure that reaches it as a bare frame string.
+func LooksQueryTooLong(msg string) bool {
+	low := strings.ToLower(msg)
+	for _, m := range tooLongMarkers {
+		if strings.Contains(low, strings.ToLower(m)) {
+			return true
+		}
+	}
+	return false
+}
+
+// NewQueryTooLong builds the typed error for a rejected over-length query.
+func NewQueryTooLong(message string, queryChars, limit int) error {
+	return &QueryTooLongError{Message: message, QueryChars: queryChars, Limit: limit}
+}
+
 // ChatStream is an open streaming completion.
 type ChatStream struct {
 	Frames  <-chan Frame
 	release func(error)
 	body    io.ReadCloser
+	// err carries a transport-level failure that ended the stream early, so a
+	// caller can tell a truncated response from a complete one.
+	err chan error
 	// Model echoes the model code the backend accepted.
 	Model string
+}
+
+// ReadError reports a transport failure that cut the stream short.
+//
+// It must be consulted after Frames closes. A nil result means the backend
+// ended the stream on its own and the accumulated frames are the whole reply;
+// a non-nil result means the reply is incomplete and must not be presented as
+// finished. It is safe to call more than once and after Close.
+func (s *ChatStream) ReadError() error {
+	if s.err == nil {
+		return nil
+	}
+	select {
+	case err := <-s.err:
+		return err
+	default:
+		return nil
+	}
 }
 
 // Close releases the stream and reports success or failure to the pool.
@@ -243,6 +336,21 @@ func (s *ChatStream) Close(err error) {
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatStream, error) {
 	if c.pool.Size() == 0 {
 		return nil, session.ErrNoSession
+	}
+
+	// The web backend rejects an over-length query with a normal 200 and an
+	// in-band `error` frame, which costs a round-trip and a lease to discover.
+	// The ceiling is a stable property of the account, so it is enforced here
+	// first and the caller gets an accurate, permanent error immediately.
+	//
+	// The ceiling counts characters, not bytes: a CJK-heavy prompt is 3 bytes
+	// per character in UTF-8, so a byte comparison would reject a request that
+	// the upstream happily accepts (and vice versa for ASCII). Counting runes
+	// is what makes the local guard agree with the backend.
+	if limit := c.cfg.Upstream.MaxQueryChars; limit > 0 {
+		if n := utf8.RuneCountInString(req.Query); n > limit {
+			return nil, NewQueryTooLong("", n, limit)
+		}
 	}
 
 	var lastErr error
@@ -347,12 +455,18 @@ func (c *Client) chatOnce(ctx context.Context, sess config.Session,
 	}
 
 	frames := make(chan Frame, 32)
+	streamErr := make(chan error, 1)
 	go func() {
 		defer close(frames)
-		parseSSE(ctx, resp.Body, frames)
+		parseSSE(ctx, resp.Body, frames, streamErr)
 	}()
 
-	return &ChatStream{Frames: frames, body: resp.Body, Model: req.ModelConfig.Model}, nil
+	return &ChatStream{
+		Frames: frames,
+		err:    streamErr,
+		body:   resp.Body,
+		Model:  req.ModelConfig.Model,
+	}, nil
 }
 
 // parseSSE decodes named-event SSE frames into the channel.
@@ -361,7 +475,7 @@ func (c *Client) chatOnce(ctx context.Context, sess config.Session,
 // with a blank line terminator. `data:` lines are accumulated in case the
 // backend ever splits a JSON payload across multiple lines, which the SSE
 // spec permits.
-func parseSSE(ctx context.Context, r io.Reader, out chan<- Frame) {
+func parseSSE(ctx context.Context, r io.Reader, out chan<- Frame, errCh chan<- error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64<<10), 4<<20)
 
@@ -423,6 +537,23 @@ func parseSSE(ctx context.Context, r io.Reader, out chan<- Frame) {
 			continue
 		}
 		// `id:`, `retry:` and comments (`:`) are ignored.
+	}
+	// A read failure is not an end of stream.
+	//
+	// Without this check a connection reset, a truncated chunked body or an
+	// idle-timeout kill looks exactly like the backend finishing normally, so
+	// the caller renders a half-generated answer as a complete one. Reporting
+	// the error is what lets the caller distinguish "the model finished" from
+	// "the transport died", which is the difference between a correct reply
+	// and silent truncation.
+	if err := scanner.Err(); err != nil {
+		if ctx.Err() == nil {
+			select {
+			case errCh <- fmt.Errorf("upstream stream read failed: %w", err):
+			default:
+			}
+		}
+		return
 	}
 	flush()
 }
@@ -524,6 +655,12 @@ func reasonFor(err error) string {
 func retryable(err error) bool {
 	if IsAuthError(err) || IsBannedError(err) {
 		return true // a *different* session may still work
+	}
+	// An over-length query is a property of the request, not of the session.
+	// Retrying it against another cookie reproduces the identical rejection
+	// while burning a lease, so it is never retryable.
+	if IsQueryTooLong(err) {
+		return false
 	}
 	var be *BackendError
 	if errors.As(err, &be) {

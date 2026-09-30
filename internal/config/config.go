@@ -104,6 +104,16 @@ type Upstream struct {
 	ConnectTimeout  int       `json:"connect_timeout_seconds"`
 	ResponseTimeout int       `json:"response_header_timeout_seconds"`
 	MaxBodyBytes    int64     `json:"max_body_bytes"`
+	// MaxQueryChars is the ceiling on the composed upstream query, in
+	// characters (runes), not bytes.
+	//
+	// The MiMo web backend does not honour the model's advertised token
+	// context: it independently caps the raw per-request text at roughly
+	// 100,000 characters and answers anything longer with HTTP 200 plus an
+	// in-band error frame. Enforcing the same ceiling locally turns a wasted
+	// round-trip into an immediate, actionable error. 0 disables the guard and
+	// lets the backend be the judge.
+	MaxQueryChars int `json:"max_query_chars"`
 	// CooldownSeconds is how long a session is parked after the backend
 	// reports it as banned or its cookies stop working.
 	CooldownSeconds int `json:"cooldown_seconds"`
@@ -164,6 +174,7 @@ func Default() *Config {
 			ConnectTimeout:  15,
 			ResponseTimeout: 120,
 			MaxBodyBytes:    16 << 20,
+			MaxQueryChars:   DefaultMaxQueryChars,
 			CooldownSeconds: 300,
 			UserAgent:       DefaultUserAgent,
 			Locale:          "zh-CN",
@@ -197,6 +208,19 @@ func Default() *Config {
 // DefaultUserAgent mimics the Chrome build the web client targets.
 const DefaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
 	"AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+// DefaultMaxQueryChars is the local ceiling on the composed upstream query.
+//
+// It is set from measurement, not from the model's advertised context window.
+// Bisecting the live backend showed a clean boundary: a 90,000-character
+// prompt succeeds while 110,000 characters is rejected almost instantly, so
+// the real ceiling sits between them at roughly 100,000 characters. The model
+// metadata advertises 131,072–262,144 *tokens*, which is a different and much
+// looser limit — trusting it is what let oversized requests through.
+//
+// 95,000 leaves a safety margin below the boundary while staying well above
+// any ordinary request, so the guard only fires on genuinely oversized input.
+const DefaultMaxQueryChars = 95000
 
 // Load reads a config file, applying environment overrides on top.
 // SessionFile is where authorised accounts are persisted.
@@ -410,6 +434,13 @@ func (c *Config) Validate() error {
 	}
 	if c.Upstream.MaxBodyBytes <= 0 {
 		return fmt.Errorf("upstream.max_body_bytes must be positive")
+	}
+	// A negative ceiling is a configuration mistake, not a request to disable
+	// the guard: 0 is the documented way to turn it off, and any positive
+	// value is honoured as-is.
+	if c.Upstream.MaxQueryChars < 0 {
+		return fmt.Errorf("upstream.max_query_chars must be >= 0 (0 disables the guard), got %d",
+			c.Upstream.MaxQueryChars)
 	}
 	if c.Upstream.ConnectTimeout <= 0 {
 		return fmt.Errorf("upstream.connect_timeout_seconds must be positive")

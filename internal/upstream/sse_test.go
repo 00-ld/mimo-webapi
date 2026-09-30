@@ -16,7 +16,7 @@ func TestParseSSENamedEvents(t *testing.T) {
 		"event: finish\ndata: {}\n\n"
 
 	ch := make(chan Frame, 16)
-	parseSSE(context.Background(), strings.NewReader(raw), ch)
+	parseSSE(context.Background(), strings.NewReader(raw), ch, make(chan error, 1))
 	close(ch)
 
 	var got []Frame
@@ -50,7 +50,7 @@ func TestParseSSENamedEvents(t *testing.T) {
 func TestParseSSEMultilineData(t *testing.T) {
 	raw := "event: message\ndata: {\"content\":\ndata: \"split\"}\n\n"
 	ch := make(chan Frame, 4)
-	parseSSE(context.Background(), strings.NewReader(raw), ch)
+	parseSSE(context.Background(), strings.NewReader(raw), ch, make(chan error, 1))
 	close(ch)
 
 	var frames []Frame
@@ -70,7 +70,7 @@ func TestParseSSEMultilineData(t *testing.T) {
 func TestParseSSENonJSONPayload(t *testing.T) {
 	raw := "event: error\ndata: upstream exploded\n\n"
 	ch := make(chan Frame, 4)
-	parseSSE(context.Background(), strings.NewReader(raw), ch)
+	parseSSE(context.Background(), strings.NewReader(raw), ch, make(chan error, 1))
 	close(ch)
 	f := <-ch
 	if f.Event != "error" || f.Content != "upstream exploded" {
@@ -83,7 +83,7 @@ func TestParseSSEIgnoresCommentsAndID(t *testing.T) {
 	raw := ": keep-alive\nid: 42\nretry: 1000\n" +
 		"event: message\ndata: {\"content\":\"ok\"}\n\n"
 	ch := make(chan Frame, 4)
-	parseSSE(context.Background(), strings.NewReader(raw), ch)
+	parseSSE(context.Background(), strings.NewReader(raw), ch, make(chan error, 1))
 	close(ch)
 
 	var frames []Frame
@@ -100,7 +100,7 @@ func TestParseSSEIgnoresCommentsAndID(t *testing.T) {
 func TestParseSSEFlushesTrailingFrame(t *testing.T) {
 	raw := "event: message\ndata: {\"content\":\"tail\"}"
 	ch := make(chan Frame, 4)
-	parseSSE(context.Background(), strings.NewReader(raw), ch)
+	parseSSE(context.Background(), strings.NewReader(raw), ch, make(chan error, 1))
 	close(ch)
 	f := <-ch
 	if f.Content != "tail" {
@@ -115,7 +115,7 @@ func TestParseSSEStopsOnCancel(t *testing.T) {
 	ch := make(chan Frame, 0) // unbuffered: any send would block forever
 	done := make(chan struct{})
 	go func() {
-		parseSSE(ctx, strings.NewReader("event: message\ndata: {}\n\n"), ch)
+		parseSSE(ctx, strings.NewReader("event: message\ndata: {}\n\n"), ch, make(chan error, 1))
 		close(done)
 	}()
 	<-done
